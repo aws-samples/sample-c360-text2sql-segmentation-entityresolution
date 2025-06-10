@@ -1,0 +1,16 @@
+{
+  "name": "websocket-authorizer",
+  "version": "1.0.0",
+  "description": "WebSocket authorizer for Cognito authentication",
+  "main": "websocket_authorizer.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "aws-jwt-verify": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.119",
+    "typescript": "^5.1.6"
+  }
+}
