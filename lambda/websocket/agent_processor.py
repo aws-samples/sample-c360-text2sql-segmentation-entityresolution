@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import uuid
+import random
 from datetime import datetime
 from typing import Dict, Any, List
 
@@ -27,10 +28,27 @@ ATHENA_WORKGROUP = os.environ["ATHENA_WORKGROUP"]
 # DynamoDB tables
 session_table = dynamodb.Table(SESSION_TABLE)
 
-# Bedrock model setup
-bedrock_model = BedrockModel(
-    model_id="us.anthropic.claude-3-7-sonnet-20250219-v1:0", temperature=0.0, boto_session=boto3.Session(region_name="us-west-2")
-)
+# Cross Region Inference System endpoints configuration
+CRIS_ENDPOINTS = [
+    {
+        "region_name": "us-west-2", 
+        "model_id": "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+        "weight": 2  # US region has double weight
+    },
+    {
+        "region_name": "eu-central-1", 
+        "model_id": "eu.anthropic.claude-3-7-sonnet-20250219-v1:0",
+        "weight": 1
+    },
+    {
+        "region_name": "ap-northeast-1", 
+        "model_id": "apac.anthropic.claude-3-7-sonnet-20250219-v1:0",
+        "weight": 1
+    }
+]
+
+# Bedrock model will be initialized in the handler function to ensure
+# proper load balancing across endpoints on each invocation
 
 # SQL result threshold
 SQL_RESULT_THRESHOLD = 300
@@ -528,6 +546,30 @@ def send_to_connection(connection_id, data, api_gateway_endpoint):
         logger.error(f"Error sending message to connection {connection_id}: {str(e)}")
 
 
+def initialize_bedrock_model():
+    """
+    Initialize a BedrockModel by selecting an endpoint using weighted random selection.
+    US region has double the weight of other regions to increase its selection probability.
+    
+    Returns:
+        An initialized BedrockModel instance
+    """
+    # Extract endpoints and their weights for weighted random selection
+    endpoints = CRIS_ENDPOINTS
+    weights = [endpoint["weight"] for endpoint in endpoints]
+    
+    # Use random.choices for weighted selection (returns a list, so we take the first item)
+    selected_endpoint = random.choices(endpoints, weights=weights, k=1)[0]
+    logger.info(f"Selected CRIS endpoint: {selected_endpoint['model_id']} in region {selected_endpoint['region_name']}")
+    
+    # Create and return a new BedrockModel instance
+    return BedrockModel(
+        model_id=selected_endpoint['model_id'], 
+        temperature=0.0, 
+        boto_session=boto3.Session(region_name=selected_endpoint['region_name'])
+    )
+
+
 def handler(event, context):
     """
     Main handler for the Agent processor Lambda.
@@ -556,6 +598,9 @@ def handler(event, context):
         # Send processing message to client
         send_to_connection(connection_id, {"type": "processing", "message": "Processing your request..."}, api_gateway_endpoint)
 
+        # Initialize a new BedrockModel for this invocation (ensures load balancing)
+        bedrock_model = initialize_bedrock_model()
+        
         # Get conversation history
         agent_messages = get_conversation_history(user_id, session_id)
 
