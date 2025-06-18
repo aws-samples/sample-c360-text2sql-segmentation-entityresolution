@@ -66,6 +66,7 @@ const useChat = (userId: string) => {
       content: [{ text: content }]
     };
 
+    console.log('### sessionId:' + sessionId);
     setMessages((prevMessages) => [...prevMessages, userMessage]);
     setIsLoading(true);
 
