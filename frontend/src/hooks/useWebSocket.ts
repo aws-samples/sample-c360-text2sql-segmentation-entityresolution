@@ -14,9 +14,33 @@ const useWebSocket = () => {
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Get WebSocket URL from environment variables
   const wsUrl = import.meta.env.VITE_APP_WEBSOCKET_URL;
+
+  // Start heartbeat to keep connection alive
+  const startHeartbeat = useCallback(() => {
+    // Clear any existing heartbeat interval
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+    }
+    
+    // Set up new heartbeat interval - 3 minutes (180000 ms)
+    heartbeatIntervalRef.current = setInterval(() => {
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        console.log('Sending heartbeat ping to keep connection alive');
+        socketRef.current.send(JSON.stringify({ type: 'ping' }));
+      }
+    }, 180000); // 3 minutes
+    
+    return () => {
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+        heartbeatIntervalRef.current = null;
+      }
+    };
+  }, []);
 
   // Connect to WebSocket with authentication and wait for connection to establish
   const connect = useCallback(async () => {
@@ -43,6 +67,9 @@ const useWebSocket = () => {
       socketRef.current.onopen = () => {
         console.log('WebSocket connected');
         setIsConnected(true);
+        
+        // Start heartbeat when connection is established
+        startHeartbeat();
       };
 
       socketRef.current.onmessage = (event) => {
@@ -62,18 +89,24 @@ const useWebSocket = () => {
       };
 
       socketRef.current.onclose = (event) => {
-        console.log('WebSocket disconnected:', event);
+        console.log(`WebSocket disconnected: code=${event.code}, reason=${event.reason}, wasClean=${event.wasClean}`, event);
         setIsConnected(false);
+
+        // Stop heartbeat on disconnect
+        if (heartbeatIntervalRef.current) {
+          clearInterval(heartbeatIntervalRef.current);
+          heartbeatIntervalRef.current = null;
+        }
 
         // Attempt to reconnect after a delay
         if (reconnectTimeoutRef.current) {
           clearTimeout(reconnectTimeoutRef.current);
         }
 
-        reconnectTimeoutRef.current = setTimeout(() => {
-          console.log('Attempting to reconnect WebSocket...');
-          connect();
-        }, 3000);
+        // reconnectTimeoutRef.current = setTimeout(() => {
+        //   console.log('Attempting to reconnect WebSocket...');
+        //   connect();
+        // }, 3000);
       };
 
       socketRef.current.onerror = (error) => {
@@ -107,10 +140,16 @@ const useWebSocket = () => {
       setShowError(true);
       throw error;
     }
-  }, [setShowError, wsUrl]);
+  }, [setShowError, wsUrl, startHeartbeat]);
 
   // Disconnect from WebSocket
   const disconnect = useCallback(() => {
+    // Stop heartbeat
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = null;
+    }
+
     if (socketRef.current) {
       socketRef.current.close();
       socketRef.current = null;
@@ -131,6 +170,7 @@ const useWebSocket = () => {
         await connect();
       }
 
+      console.log('Sending data via WebSocket:', payload);
       socketRef.current?.send(JSON.stringify(payload));
     } catch (error) {
       console.error('Error sending data:', error);

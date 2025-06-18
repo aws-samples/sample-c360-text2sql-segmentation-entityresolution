@@ -39,6 +39,14 @@ def handler(event, context):
     elif route_key == "chat":
         return handle_chat(event, connection_id)
     else:
+        # Check if this is a ping message
+        try:
+            body = json.loads(event.get("body", "{}"))
+            if body.get("type") == "ping":
+                return handle_ping(connection_id, event)
+        except Exception as e:
+            logger.error(f"Error parsing message body: {str(e)}")
+
         return handle_default(connection_id)
 
 
@@ -127,16 +135,38 @@ def handle_chat(event, connection_id):
         return {"statusCode": 500, "body": f"Error: {str(e)}"}
 
 
+def handle_ping(connection_id, event):
+    """
+    Handle ping messages for keeping the WebSocket connection alive.
+    Responds with a pong message.
+    """
+    try:
+        logger.info(f"Received ping from connection_id={connection_id}")
+
+        # Get API Gateway endpoint
+        api_gateway_endpoint = get_api_endpoint(event)
+
+        # Send pong response
+        send_to_connection(
+            connection_id, {"type": "pong", "timestamp": event.get("requestContext", {}).get("requestTimeEpoch")}, api_gateway_endpoint
+        )
+
+        return {"statusCode": 200, "body": "Pong sent"}
+    except Exception as e:
+        logger.error(f"Error in handle_ping: {str(e)}")
+        return {"statusCode": 500, "body": f"Error: {str(e)}"}
+
+
 def handle_default(connection_id):
     """
     Handle default route (unknown route key).
     """
-    api_gateway_endpoint = None
     try:
-        send_to_connection(connection_id, {"type": "error", "message": "Unknown route"}, api_gateway_endpoint)
+        logger.warning(f"Unknown route for connection_id={connection_id}")
+        return {"statusCode": 400, "body": "Unknown route"}
     except Exception as e:
         logger.error(f"Error in handle_default: {str(e)}")
-    return {"statusCode": 400, "body": "Unknown route"}
+        return {"statusCode": 500, "body": f"Error: {str(e)}"}
 
 
 def send_to_connection(connection_id, data, api_gateway_endpoint):
@@ -156,6 +186,7 @@ def send_to_connection(connection_id, data, api_gateway_endpoint):
 
     try:
         gateway_api.post_to_connection(ConnectionId=connection_id, Data=json.dumps(data).encode("utf-8"))
+        logger.info(f"Message sent to connection {connection_id}: {json.dumps(data)}")
     except Exception as e:
         logger.error(f"Error sending message to connection {connection_id}: {str(e)}")
 
