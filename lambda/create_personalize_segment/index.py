@@ -1,110 +1,115 @@
 import os
 import boto3
 import json
-import time
 import uuid
 import logging
+from datetime import datetime
 
 DATASET_GROUP_ARN = os.environ["DATASET_GROUP_ARN"]
 DATASET_ARN = os.environ["DATASET_ARN"]
-ATHENA_BUCKET = os.environ["ATHENA_BUCKET"]
 OUTPUT_BUCKET = os.environ["OUTPUT_BUCKET"]
 OUTPUT_PREFIX = os.environ["OUTPUT_PREFIX"]
-GLUE_DATABASE_NAME = os.environ["GLUE_DATABASE_NAME"]
 PERSONALIZE_ROLE_ARN = os.environ["PERSONALIZE_ROLE_ARN"]
 USER_PER_SEGMENT = os.environ.get("USER_PER_SEGMENT", "100")
+SOLUTION_VERSION_TABLE = os.environ["SOLUTION_VERSION_TABLE"]
+TARGET_BUCKET = os.environ["TARGET_BUCKET"]  # Bucket to store processed CSV results
+TARGET_PREFIX = os.environ["TARGET_PREFIX"]  # Prefix to store processed CSV results
 
-athena = boto3.client("athena")
 s3 = boto3.client("s3")
 personalize = boto3.client("personalize")
+dynamodb = boto3.resource("dynamodb")
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 
-def handler(event, context):
+def delete_existing_csv_files(bucket, prefix):
     """
-    Lambda function to:
-    1. Query Glue table to get all item IDs from the main brand item master
-    2. Create a batch segment job in Amazon Personalize using the Item Affinity recipe
-       with proper JSON format for input data
+    指定したバケットとプレフィックスに一致するCSVファイルを全て削除する
 
     Args:
-        event: The event dict from Step Functions containing the solution version ARN
+        bucket: S3バケット名
+        prefix: S3オブジェクトプレフィックス
+    """
+    try:
+        # Paginatorを使用して全てのオブジェクトを取得
+        paginator = s3.get_paginator("list_objects_v2")
+        pages = paginator.paginate(Bucket=bucket, Prefix=prefix)
+
+        # 削除対象のオブジェクトを収集
+        objects_to_delete = []
+
+        for page in pages:
+            if "Contents" not in page:
+                continue
+
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+
+                # CSVファイルのみを対象にする
+                if key.endswith(".csv"):
+                    objects_to_delete.append({"Key": key})
+
+        # オブジェクトを削除
+        if objects_to_delete:
+            logger.info(f"Deleting {len(objects_to_delete)} existing CSV files")
+
+            # S3のdelete_objectsは1000オブジェクトまでしか一度に削除できないため、
+            # 1000オブジェクトごとにバッチ処理
+            for i in range(0, len(objects_to_delete), 1000):
+                batch = objects_to_delete[i : i + 1000]
+                s3.delete_objects(Bucket=bucket, Delete={"Objects": batch})
+
+            logger.info(f"Successfully deleted {len(objects_to_delete)} existing CSV files")
+    except Exception as e:
+        logger.error(f"Error deleting existing CSV files: {str(e)}")
+        # 削除に失敗しても処理は続行
+
+
+def handler(event, context):
+    """
+    Lambda function to create a batch segment job in Amazon Personalize using the Item Affinity recipe
+    with proper JSON format for input data.
+
+    Args:
+        event: The event dict containing item_ids (list)
         context: Lambda context
 
     Returns:
         Dictionary containing job details and status
     """
     try:
-        # Get solution version ARN from the event
-        solution_version_arn = event.get("solutionVersionArn")
+        # Delete existing CSV files (replacement method)
+        logger.info(f"Deleting existing CSV files from {TARGET_BUCKET}/{TARGET_PREFIX}")
+        delete_existing_csv_files(TARGET_BUCKET, TARGET_PREFIX)
+
+        # Get item_ids from the event
+        item_ids = event.get("item_ids", [])
+
+        if not item_ids:
+            raise ValueError("item_ids is required and cannot be empty")
+
+        logger.info(f"Creating segment for item_ids: {item_ids}")
+
+        # Get solution version ARN from DynamoDB and update segment job status
+        try:
+            logger.info(f"Getting solution version ARN from DynamoDB table: {SOLUTION_VERSION_TABLE}")
+            solution_version_table = dynamodb.Table(SOLUTION_VERSION_TABLE)
+            response = solution_version_table.get_item(Key={"id": "latest"})
+
+            if "Item" in response and "solutionVersionArn" in response["Item"]:
+                solution_version_arn = response["Item"]["solutionVersionArn"]
+                logger.info(f"Retrieved solution version ARN from DynamoDB: {solution_version_arn}")
+            else:
+                raise ValueError("No solution version ARN found in DynamoDB")
+        except Exception as ddb_error:
+            logger.error(f"Error retrieving solution version ARN from DynamoDB: {str(ddb_error)}")
+            raise
 
         logger.info(f"Using solution version ARN: {solution_version_arn}")
 
         # Generate unique ID for this run using UUID
         unique_id = str(uuid.uuid4())
-        execution_id = unique_id
-
-        # SQL query to get all item IDs from the main brand item master
-        query = f"""
-        SELECT 
-            item_id
-        FROM 
-            {GLUE_DATABASE_NAME}.item_master
-        """
-
-        logger.info(f"Executing Athena query: {query}")
-
-        # Start Athena query execution
-        response = athena.start_query_execution(
-            QueryString=query,
-            QueryExecutionContext={"Database": GLUE_DATABASE_NAME},
-            ResultConfiguration={
-                "OutputLocation": f"s3://{ATHENA_BUCKET}/athena-results/{execution_id}/",
-                "EncryptionConfiguration": {"EncryptionOption": "SSE_S3"},
-            },
-            WorkGroup="primary",
-        )
-
-        query_execution_id = response["QueryExecutionId"]
-        logger.info(f"Started Athena query with execution ID: {query_execution_id}")
-
-        # Wait for query to complete
-        state = "RUNNING"
-        while state in ["RUNNING", "QUEUED"]:
-            response = athena.get_query_execution(QueryExecutionId=query_execution_id)
-            state = response["QueryExecution"]["Status"]["State"]
-
-            if state in ["RUNNING", "QUEUED"]:
-                time.sleep(5)
-
-        if state == "FAILED":
-            error_message = response["QueryExecution"]["Status"].get("StateChangeReason", "Unknown error")
-            raise Exception(f"Athena query failed: {error_message}")
-        elif state == "CANCELLED":
-            raise Exception("Athena query was cancelled")
-
-        logger.info("Athena query completed successfully")
-
-        # Get the S3 path of the query results
-        result_location = response["QueryExecution"]["ResultConfiguration"]["OutputLocation"]
-        logger.info(f"Athena query results stored at: {result_location}")
-
-        # Parse the S3 path to get bucket and key
-        s3_path = result_location.replace("s3://", "")
-        s3_bucket = s3_path.split("/")[0]
-        s3_key = "/".join(s3_path.split("/")[1:])
-
-        # Read the CSV results from S3
-        response = s3.get_object(Bucket=s3_bucket, Key=s3_key)
-        csv_content = response["Body"].read().decode("utf-8")
-
-        # Skip header row and process each item ID
-        lines = csv_content.strip().split("\n")
-        item_ids = [line.strip('"') for line in lines[1:] if line.strip()]
-
-        logger.info(f"Found {len(item_ids)} item IDs")
 
         # Create JSON input file in the correct format for batch segment job
         # Each line should be in format: {"itemId": "ITEM_ID"}
@@ -143,10 +148,27 @@ def handler(event, context):
 
         logger.info(f"Created batch segment job: {job_name} with ARN: {batch_segment_job_arn}")
 
+        # Update segment job status in DynamoDB
+        try:
+            logger.info(f"Updating segment job status in DynamoDB table: {SOLUTION_VERSION_TABLE}")
+            solution_version_table.update_item(
+                Key={"id": "latest"},
+                UpdateExpression="SET segmentJobId = :jobId, segmentJobStatus = :status, segmentJobItemIds = :itemIds, segmentJobCreatedAt = :createdAt",
+                ExpressionAttributeValues={
+                    ":jobId": job_name,
+                    ":status": "RUNNING",
+                    ":itemIds": item_ids,
+                    ":createdAt": datetime.now().isoformat(),
+                },
+            )
+            logger.info("Successfully updated segment job status in DynamoDB")
+        except Exception as ddb_error:
+            logger.error(f"Error updating segment job status in DynamoDB: {str(ddb_error)}")
+            # Continue even if update fails
+
         return {
             "jobName": job_name,
             "batchSegmentJobArn": batch_segment_job_arn,
-            "athenaQueryExecutionId": query_execution_id,
             "inputLocation": input_s3_path,
             "isCompleted": False,
             "message": f"Batch segment job created successfully: {job_name}",

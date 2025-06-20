@@ -8,6 +8,7 @@ import { PythonFunction } from '@aws-cdk/aws-lambda-python-alpha';
 import { EntityResolutionService } from './entity-resolution-service';
 import { DataStorage } from './data-storage';
 import { PersonalizeService } from './personalize';
+import { PersonalizeStore } from './solution-version-store';
 
 /**
  * Data Integration Workflow Properties
@@ -16,6 +17,7 @@ export interface DataIntegrationWorkflowProps {
   entityResolutionService: EntityResolutionService;
   dataStorage: DataStorage;
   personalizeService: PersonalizeService;
+  personalizeStore: PersonalizeStore;
 }
 
 /**
@@ -37,14 +39,11 @@ export class DataIntegrationWorkflow extends Construct {
   private readonly checkSolutionStatus: PythonFunction;
   private readonly createPersonalizeSolutionVersionFunction: PythonFunction;
   private readonly checkSolutionVersionStatusFunction: PythonFunction;
-  private readonly createPersonalizeSegmentFunction: PythonFunction;
-  private readonly checkBatchSegmentJobStatusFunction: PythonFunction;
-  private readonly processSegmentResultsFunction: PythonFunction;
 
   constructor(scope: Construct, id: string, props: DataIntegrationWorkflowProps) {
     super(scope, id);
 
-    const { entityResolutionService, dataStorage, personalizeService } = props;
+    const { entityResolutionService, dataStorage, personalizeService, personalizeStore } = props;
 
     // Entity Resolution実行用のLambda関数を作成
     this.erStarter = new PythonFunction(this, 'RunEntityResolutionFunction', {
@@ -211,7 +210,10 @@ export class DataIntegrationWorkflow extends Construct {
     this.checkSolutionVersionStatusFunction = new PythonFunction(this, 'CheckSolutionVersionStatus', {
       runtime: lambda.Runtime.PYTHON_3_13,
       entry: 'lambda/check_solution_version_status',
-      timeout: cdk.Duration.minutes(5)
+      timeout: cdk.Duration.minutes(5),
+      environment: {
+        SOLUTION_VERSION_TABLE: personalizeStore.personalizeTable.tableName
+      }
     });
 
     // Personalizeへのアクセス権限を付与（ステータス確認用）
@@ -222,46 +224,8 @@ export class DataIntegrationWorkflow extends Construct {
       })
     );
 
-    // Personalizeセグメント作成用のLambda関数を作成
-    this.createPersonalizeSegmentFunction = new PythonFunction(this, 'CreatePersonalizeSegment', {
-      runtime: lambda.Runtime.PYTHON_3_13,
-      entry: 'lambda/create_personalize_segment',
-      timeout: cdk.Duration.minutes(15),
-      environment: {
-        DATASET_GROUP_ARN: personalizeService.datasetGroup.attrDatasetGroupArn,
-        DATASET_ARN: personalizeService.interactionDataset.attrDatasetArn,
-        ATHENA_BUCKET: dataStorage.athenaResultBucket.bucketName,
-        OUTPUT_BUCKET: personalizeService.segmentOutputBucket.bucketName,
-        OUTPUT_PREFIX: 'segments/',
-        GLUE_DATABASE_NAME: dataStorage.glueDatabase.databaseName,
-        PERSONALIZE_ROLE_ARN: personalizeService.personalizeRole.roleArn
-      }
-    });
-
-    // Athenaへのアクセス権限を付与
-    this.createPersonalizeSegmentFunction.addToRolePolicy(
-      new iam.PolicyStatement({
-        actions: [
-          'athena:StartQueryExecution',
-          'athena:GetQueryExecution',
-          'athena:GetQueryResults',
-          'glue:GetTable',
-          'glue:GetPartitions',
-          'glue:GetDatabase',
-          'personalize:CreateBatchSegmentJob',
-          'personalize:DescribeBatchSegmentJob',
-          'personalize:ListBatchSegmentJobs'
-        ],
-        resources: ['*']
-      })
-    );
-
-    // S3バケットへのアクセス権限を付与
-    dataStorage.dataBucket.grantRead(this.createPersonalizeSegmentFunction);
-    dataStorage.athenaResultBucket.grantReadWrite(this.createPersonalizeSegmentFunction);
-    personalizeService.segmentOutputBucket.grantReadWrite(this.createPersonalizeSegmentFunction);
-    // IAM PassRole 権限を追加
-    personalizeService.personalizeRole.grantPassRole(this.createPersonalizeSegmentFunction.role!);
+    // DynamoDBへのアクセス権限を付与
+    personalizeStore.personalizeTable.grantWriteData(this.checkSolutionVersionStatusFunction);
 
     // Entity Resolution実行タスク
     const erStarterTask = new tasks.LambdaInvoke(this, 'erStarterTask', {
@@ -330,66 +294,8 @@ export class DataIntegrationWorkflow extends Construct {
       resultPath: '$.solutionVersionResult'
     });
 
-    // Personalizeセグメント作成タスク
-    const createPersonalizeSegmentTask = new tasks.LambdaInvoke(this, 'CreatePersonalizeSegmentTask', {
-      lambdaFunction: this.createPersonalizeSegmentFunction,
-      payload: sfn.TaskInput.fromObject({
-        solutionVersionArn: sfn.JsonPath.stringAt('$.solutionVersionStatusCheck.Payload.solutionVersionArn')
-      }),
-      resultPath: '$.segmentResult'
-    });
-
-    // バッチセグメントジョブのステータスを確認するLambda関数を作成
-    this.checkBatchSegmentJobStatusFunction = new PythonFunction(this, 'CheckBatchSegmentJobStatus', {
-      runtime: lambda.Runtime.PYTHON_3_13,
-      entry: 'lambda/check_batch_segment_job_status',
-      timeout: cdk.Duration.minutes(5)
-    });
-
-    // Personalizeへのアクセス権限を付与（ステータス確認用）
-    this.checkBatchSegmentJobStatusFunction.addToRolePolicy(
-      new iam.PolicyStatement({
-        actions: ['personalize:DescribeBatchSegmentJob'],
-        resources: ['*']
-      })
-    );
-
-    // セグメント結果を処理するLambda関数を作成
-    this.processSegmentResultsFunction = new PythonFunction(this, 'ProcessSegmentResults', {
-      runtime: lambda.Runtime.PYTHON_3_13,
-      entry: 'lambda/process_segment_results',
-      timeout: cdk.Duration.minutes(15),
-      environment: {
-        SEGMENT_BUCKET: personalizeService.segmentOutputBucket.bucketName,
-        SEGMENT_PREFIX: 'segments/',
-        TARGET_BUCKET: dataStorage.dataBucket.bucketName,
-        TARGET_PREFIX: dataStorage.itemBasedSegmentPrefix
-      }
-    });
-
-    // S3バケットへのアクセス権限を付与
-    personalizeService.segmentOutputBucket.grantRead(this.processSegmentResultsFunction);
-    dataStorage.dataBucket.grantReadWrite(this.processSegmentResultsFunction);
-
-    // セグメント結果処理タスク
-    const processSegmentResultsTask = new tasks.LambdaInvoke(this, 'ProcessSegmentResultsTask', {
-      lambdaFunction: this.processSegmentResultsFunction,
-      payload: sfn.TaskInput.fromJsonPathAt('$.batchSegmentJobStatusCheck.Payload'),
-      resultPath: '$.processSegmentResults'
-    }).next(new sfn.Pass(this, 'Complete', {}));
-
-    // バッチセグメントジョブの待機ループを作成
-    const batchSegmentJobWaitLoop = createWaitLoop(
-      'BatchSegmentJob',
-      this.checkBatchSegmentJobStatusFunction,
-      '$.segmentResult.Payload',
-      '$.batchSegmentJobStatusCheck',
-      '$.batchSegmentJobStatusCheck.Payload.isCompleted',
-      processSegmentResultsTask
-    );
-
-    // セグメント作成タスクを待機ループに接続
-    createPersonalizeSegmentTask.next(batchSegmentJobWaitLoop);
+    // Complete state
+    const completeState = new sfn.Pass(this, 'Complete', {});
 
     // 各待機ループを作成 - 正しい順序で接続
     const solutionVersionWaitLoop = createWaitLoop(
@@ -398,7 +304,7 @@ export class DataIntegrationWorkflow extends Construct {
       '$.solutionVersionResult.Payload',
       '$.solutionVersionStatusCheck',
       '$.solutionVersionStatusCheck.Payload.isCompleted',
-      createPersonalizeSegmentTask
+      completeState
     );
 
     const solutionWaitLoop = createWaitLoop(

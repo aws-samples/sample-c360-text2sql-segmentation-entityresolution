@@ -357,7 +357,7 @@ export class DataStorage extends Construct {
       database: this.glueDatabase,
       tableName: 'item_based_segment',
       description:
-        'Personalizeバッチセグメントジョブから生成された顧客セグメント結果。特定のアイテムを購入しそうな顧客リストを得たい時にこのテーブルを参照する',
+        'Personalizeバッチセグメントジョブから生成された顧客セグメント結果。特定のアイテムを購入しそうな顧客リストを得たい時にこのテーブルを参照する。Personalizeバッチセグメントジョブではサブブランドのitem_idは入れられない。',
       columns: [
         {
           name: 'item_id',
