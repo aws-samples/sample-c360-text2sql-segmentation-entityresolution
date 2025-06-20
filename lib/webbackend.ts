@@ -10,9 +10,13 @@ import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import { PythonFunction } from '@aws-cdk/aws-lambda-python-alpha';
 import { Cognito } from './cognito';
 import { DataStorage } from './data-storage';
+import { PersonalizeSegmentWorkflow } from './personalize-segment-workflow';
+import { PersonalizeStore } from './solution-version-store';
 
 interface WebBackendProps {
   dataStorage: DataStorage;
+  personalizeSegmentWorkflow: PersonalizeSegmentWorkflow;
+  personalizeStore: PersonalizeStore;
 }
 
 export class WebBackend extends Construct {
@@ -46,7 +50,9 @@ export class WebBackend extends Construct {
         DDB_SESSION_TABLE: this.sessionTable.tableName,
         ATHENA_DATABASE: props.dataStorage.glueDatabase.databaseName,
         ATHENA_OUTPUT_LOCATION: `s3://${props.dataStorage.athenaResultBucket.bucketName}/athena-results/`,
-        ATHENA_WORKGROUP: 'primary'
+        ATHENA_WORKGROUP: 'primary',
+        SEGMENT_STATE_MACHINE_ARN: props.personalizeSegmentWorkflow.stateMachine.stateMachineArn,
+        SOLUTION_VERSION_TABLE: props.personalizeStore.personalizeTable.tableName
       },
       memorySize: 512
     });
@@ -90,6 +96,13 @@ export class WebBackend extends Construct {
     });
 
     this.agentProcessor.addToRolePolicy(athenaPolicy);
+
+    // Grant Step Functions permissions to the Lambda function
+    // Grant permission to start execution of the segment state machine
+    props.personalizeSegmentWorkflow.stateMachine.grantStartExecution(this.agentProcessor);
+
+    // Grant DynamoDB permissions to the Lambda function
+    props.personalizeStore.personalizeTable.grantReadData(this.agentProcessor);
 
     // Grant Lambda invoke permissions
     this.agentProcessor.grantInvoke(this.websocketHandler);

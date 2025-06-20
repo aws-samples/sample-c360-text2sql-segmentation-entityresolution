@@ -17,12 +17,15 @@ s3 = boto3.client("s3")
 athena = boto3.client("athena")
 dynamodb = boto3.resource("dynamodb")
 glue = boto3.client("glue")
+sfn = boto3.client("stepfunctions")
 
 # Required environment variables
 SESSION_TABLE = os.environ["SESSION_TABLE"]
 ATHENA_DATABASE = os.environ["ATHENA_DATABASE"]
 ATHENA_OUTPUT_LOCATION = os.environ["ATHENA_OUTPUT_LOCATION"]
 ATHENA_WORKGROUP = os.environ["ATHENA_WORKGROUP"]
+SEGMENT_STATE_MACHINE_ARN = os.environ["SEGMENT_STATE_MACHINE_ARN"]
+SOLUTION_VERSION_TABLE = os.environ["SOLUTION_VERSION_TABLE"]
 
 # DynamoDB tables
 session_table = dynamodb.Table(SESSION_TABLE)
@@ -44,16 +47,26 @@ Your primary role is to:
 2. Convert these requests into proper SQL queries for Athena
 3. Execute these queries and present the results in a clear, readable format
 4. Explain the results when appropriate
+5. Create Amazon Personalize item-based segments when requested
 
 You have access to the following tools:
 - execute_sql_query: Executes a SQL query on Athena and returns the results
-- create_downloadable_url: Creates a downloadable URL for query results.
+- create_downloadable_url: Creates a downloadable URL for query results
+- create_personalize_item_based_segment: Creates an item-based segment using Amazon Personalize's batch segment job
+- check_personalize_segment_status: Checks the status of the Amazon Personalize batch segment job
 
 When a user asks a question about data, follow this process:
 1. Based on the table structure provided in your system prompt and the user's question, formulate an appropriate SQL query
 2. Execute the query using execute_sql_query
 3. Present the results in a clear, readable format
 4. Explain what the results mean in the context of the user's question
+
+When a user asks to create an item-based segment:
+1. Use the create_personalize_item_based_segment tool with the item IDs
+2. Tell the user to wait a few minutes before checking the status
+3. DO NOT call any other tools right after create_personalize_item_based_segment and please just inform the user that the Personalize batch segment job has started and will take several minutes to complete and user should ask you about status later.
+4. When the user asks later about the status, You should use the check_personalize_segment_status tool to check and inform them.
+5. Once the Personalize batch segment job is complete (status is "COMPLETED"), the segment data will be available in the item_based_segment table
 
 
 IMPORTANT ATHENA SQL TIP:
@@ -153,8 +166,108 @@ def create_downloadable_url(query_execution_id: str) -> str:
             return f"Error: Output location is not an S3 URI: {output_location}"
 
     except Exception as e:
-        logger.error(f"Error creating segment: {str(e)}")
-        return f"Error creating segment: {str(e)}"
+        logger.error(f"Error creating downloadable URL: {str(e)}")
+        return f"Error creating downloadable URL: {str(e)}"
+
+
+@tool
+def create_personalize_item_based_segment(item_ids: List[str]) -> str:
+    """
+    Create an item-based segment using Amazon Personalize's batch segment job.
+
+    This tool starts a Step Functions state machine that creates an Amazon Personalize batch segment job
+    for the specified items and processes the results. Amazon Personalize uses machine learning to identify
+    users who are likely to interact with these specific items based on their behavior patterns.
+
+    The segment data will be available in the item_based_segment table after the batch segment job is complete.
+
+    Args:
+        item_ids: A list of item IDs to create Personalize item-based segments for
+
+    Returns:
+        A message indicating whether the Personalize batch segment job was started successfully
+    """
+    try:
+        if not item_ids:
+            return "Error: No item IDs provided"
+
+        # Check if a segment job is already running
+        logger.info(f"Checking if a segment job is already running in DynamoDB table: {SOLUTION_VERSION_TABLE}")
+        solution_version_table = dynamodb.Table(SOLUTION_VERSION_TABLE)
+        response = solution_version_table.get_item(Key={"id": "latest"})
+
+        if "Item" in response and "segmentJobStatus" in response["Item"]:
+            status = response["Item"]["segmentJobStatus"]
+            if status == "RUNNING":
+                created_at = response["Item"].get("segmentJobCreatedAt", "unknown time")
+                item_ids_running = response["Item"].get("segmentJobItemIds", [])
+                return f"Error: Another Amazon Personalize batch segment job is already running. Started at {created_at} for item IDs: {item_ids_running}. Please wait for this job to complete before starting a new one. You can check the status using the check_personalize_segment_status tool."
+
+        logger.info(f"Creating Amazon Personalize item-based segment for item IDs: {item_ids}")
+
+        # Start the segment state machine
+        execution_input = {"item_ids": item_ids}
+
+        response = sfn.start_execution(
+            stateMachineArn=SEGMENT_STATE_MACHINE_ARN, name=f"SegmentJob-{str(uuid.uuid4())}", input=json.dumps(execution_input)
+        )
+
+        logger.info(f"Started Amazon Personalize batch segment job execution: {response['executionArn']}")
+
+        return f"Amazon Personalize item-based segment creation has started successfully. This process will take several minutes to complete. Please wait for a few minutes, then use the check_personalize_segment_status tool to check if the segment creation is complete. Once complete, the segment data will be available in the item_based_segment table."
+
+    except Exception as e:
+        logger.error(f"Error creating Amazon Personalize item-based segment: {str(e)}")
+        return f"Error creating Amazon Personalize item-based segment: {str(e)}"
+
+
+@tool
+def check_personalize_segment_status() -> str:
+    """
+    Check the status of the Amazon Personalize batch segment job.
+
+    This tool queries the DynamoDB table to get the status of the latest Amazon Personalize batch segment job.
+    Amazon Personalize batch segment jobs can take some time to complete, and this tool helps track their progress.
+
+    Returns:
+        A message indicating the status of the Amazon Personalize batch segment job
+    """
+    try:
+        logger.info(f"Checking Amazon Personalize batch segment job status in DynamoDB table: {SOLUTION_VERSION_TABLE}")
+        solution_version_table = dynamodb.Table(SOLUTION_VERSION_TABLE)
+        response = solution_version_table.get_item(Key={"id": "latest"})
+
+        if "Item" not in response:
+            return "Error: No Amazon Personalize batch segment job information found"
+
+        item = response["Item"]
+
+        # Check if segment job information exists
+        if "segmentJobStatus" not in item:
+            return "No Amazon Personalize batch segment job has been created yet"
+
+        status = item["segmentJobStatus"]
+
+        if status == "NONE":
+            return "No Amazon Personalize batch segment job has been created yet"
+        elif status == "RUNNING":
+            created_at = item.get("segmentJobCreatedAt", "unknown time")
+            item_ids = item.get("segmentJobItemIds", [])
+            return f"Amazon Personalize batch segment job is currently running. Started at {created_at}. Creating item-based segments for item IDs: {item_ids}"
+        elif status == "COMPLETED":
+            created_at = item.get("segmentJobCreatedAt", "unknown time")
+            completed_at = item.get("segmentJobCompletedAt", "unknown time")
+            item_ids = item.get("segmentJobItemIds", [])
+            return f"Amazon Personalize batch segment job completed successfully at {completed_at}. Started at {created_at}. Created item-based segments for item IDs: {item_ids}. The segment data is now available in the item_based_segment table."
+        elif status == "FAILED":
+            error_msg = item.get("segmentJobErrorMessage", "Unknown error")
+            return f"Amazon Personalize batch segment job failed: {error_msg}"
+        else:
+            return f"Amazon Personalize batch segment job status: {status}"
+
+    except Exception as e:
+        logger.error(f"Error checking Amazon Personalize batch segment job status: {str(e)}")
+        return f"Error checking Amazon Personalize batch segment job status: {str(e)}"
 
 
 def wait_for_query_completion(query_execution_id: str) -> str:
@@ -568,7 +681,7 @@ def handler(event, context):
         # Create the agent with all the tools and conversation history
         agent = Agent(
             model=bedrock_model,
-            tools=[execute_sql_query, create_downloadable_url],
+            tools=[execute_sql_query, create_downloadable_url, create_personalize_item_based_segment, check_personalize_segment_status],
             system_prompt=enhanced_system_prompt,
             messages=agent_messages,
         )

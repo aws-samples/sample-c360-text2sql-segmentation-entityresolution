@@ -11,8 +11,10 @@ SEGMENT_BUCKET = os.environ["SEGMENT_BUCKET"]  # Batch segment job output bucket
 SEGMENT_PREFIX = os.environ["SEGMENT_PREFIX"]  # Batch segment job output prefix
 TARGET_BUCKET = os.environ["TARGET_BUCKET"]  # Bucket to store processed CSV results
 TARGET_PREFIX = os.environ["TARGET_PREFIX"]  # Prefix to store processed CSV results
+SOLUTION_VERSION_TABLE = os.environ["SOLUTION_VERSION_TABLE"]  # DynamoDB table for solution version and segment job status
 
 s3 = boto3.client("s3")
+dynamodb = boto3.resource("dynamodb")
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -32,16 +34,42 @@ def handler(event, context):
         # Get parameters from event
         params = extract_parameters(event)
 
-        # Delete existing CSV files (replacement method)
-        delete_existing_csv_files(params["target_bucket"], params["target_prefix"])
-
         # Process JSON files and convert to CSV
         process_segment_files(params["source_bucket"], params["source_prefix"], params["target_bucket"], params["target_key"])
 
         logger.info(f"Successfully processed segment results and created CSV file: {params['csv_filename']}")
 
+        # Update segment job status in DynamoDB
+        try:
+            logger.info(f"Updating segment job status in DynamoDB table: {SOLUTION_VERSION_TABLE}")
+            solution_version_table = dynamodb.Table(SOLUTION_VERSION_TABLE)
+            solution_version_table.update_item(
+                Key={"id": "latest"},
+                UpdateExpression="SET segmentJobStatus = :status, segmentJobCompletedAt = :completedAt",
+                ExpressionAttributeValues={":status": "COMPLETED", ":completedAt": datetime.now().isoformat()},
+            )
+            logger.info("Successfully updated segment job status in DynamoDB")
+        except Exception as ddb_error:
+            logger.error(f"Error updating segment job status in DynamoDB: {str(ddb_error)}")
+            # Continue even if update fails
+
     except Exception as e:
         logger.error(f"Error processing segment results: {str(e)}")
+
+        # Update segment job status to FAILED in DynamoDB
+        try:
+            logger.info(f"Updating segment job status to FAILED in DynamoDB table: {SOLUTION_VERSION_TABLE}")
+            solution_version_table = dynamodb.Table(SOLUTION_VERSION_TABLE)
+            solution_version_table.update_item(
+                Key={"id": "latest"},
+                UpdateExpression="SET segmentJobStatus = :status, segmentJobErrorMessage = :errorMsg, segmentJobCompletedAt = :completedAt",
+                ExpressionAttributeValues={":status": "FAILED", ":errorMsg": str(e), ":completedAt": datetime.now().isoformat()},
+            )
+            logger.info("Successfully updated segment job status to FAILED in DynamoDB")
+        except Exception as ddb_error:
+            logger.error(f"Error updating segment job status in DynamoDB: {str(ddb_error)}")
+            # Continue even if update fails
+
         raise
 
 

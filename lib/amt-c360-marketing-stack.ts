@@ -6,6 +6,8 @@ import { DataIntegrationWorkflow } from './data-integration-workflow';
 import { PersonalizeService } from './personalize';
 import { WebBackend } from './webbackend';
 import { Frontend } from './frontend';
+import { PersonalizeStore } from './solution-version-store';
+import { PersonalizeSegmentWorkflow } from './personalize-segment-workflow';
 
 export interface AmtC360MarketingStackProps extends cdk.StackProps {
   webAclArn: string;
@@ -28,16 +30,29 @@ export class AmtC360MarketingStack extends cdk.Stack {
       dataStorage
     });
 
+    // Create personalize store
+    const personalizeStore = new PersonalizeStore(this, 'PersonalizeStore', {});
+
     // Create data integration workflow execution layer
     new DataIntegrationWorkflow(this, 'DataIntegrationWorkflow', {
       entityResolutionService,
       dataStorage,
-      personalizeService
+      personalizeService,
+      personalizeStore
+    });
+
+    // Create personalize segment workflow
+    const personalizeSegmentWorkflow = new PersonalizeSegmentWorkflow(this, 'PersonalizeSegmentWorkflow', {
+      dataStorage,
+      personalizeService,
+      personalizeStore
     });
 
     // Create Web backend layer
     const webBackend = new WebBackend(this, 'WebBackend', {
-      dataStorage: dataStorage
+      dataStorage: dataStorage,
+      personalizeSegmentWorkflow: personalizeSegmentWorkflow,
+      personalizeStore: personalizeStore
     });
 
     new Frontend(this, 'Frontend', {
