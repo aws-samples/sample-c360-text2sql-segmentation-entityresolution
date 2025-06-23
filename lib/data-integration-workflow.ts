@@ -190,8 +190,12 @@ export class DataIntegrationWorkflow extends Construct {
     this.createPersonalizeSolutionVersionFunction = new PythonFunction(this, 'CreatePersonalizeSolutionVersion', {
       runtime: lambda.Runtime.PYTHON_3_13,
       entry: 'lambda/create_personalize_solution_version',
-      timeout: cdk.Duration.minutes(5)
-      // SOLUTION_ARNはStep Functionsの前のステップから動的に設定される
+      timeout: cdk.Duration.minutes(5),
+      environment: {
+        // SOLUTION_ARNはStep Functionsの前のステップから動的に設定される
+        TARGET_BUCKET: dataStorage.dataBucket.bucketName,
+        TARGET_PREFIX: dataStorage.itemBasedSegmentPrefix
+      }
     });
 
     // Personalizeへのアクセス権限を付与
@@ -205,6 +209,9 @@ export class DataIntegrationWorkflow extends Construct {
         resources: ['*']
       })
     );
+
+    // S3バケットへのアクセス権限を付与
+    dataStorage.dataBucket.grantReadWrite(this.createPersonalizeSolutionVersionFunction);
 
     // ソリューションバージョンのステータスを確認するLambda関数を作成
     this.checkSolutionVersionStatusFunction = new PythonFunction(this, 'CheckSolutionVersionStatus', {

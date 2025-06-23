@@ -48,8 +48,9 @@ export class PersonalizeSegmentWorkflow extends Construct {
         OUTPUT_PREFIX: 'segments/',
         PERSONALIZE_ROLE_ARN: personalizeService.personalizeRole.roleArn,
         SOLUTION_VERSION_TABLE: personalizeStore.personalizeTable.tableName,
-        TARGET_BUCKET: dataStorage.dataBucket.bucketName,
-        TARGET_PREFIX: dataStorage.itemBasedSegmentPrefix
+        ATHENA_DATABASE: dataStorage.glueDatabase.databaseName,
+        ATHENA_OUTPUT_LOCATION: `s3://${dataStorage.athenaResultBucket.bucketName}/athena-results/`,
+        ATHENA_WORKGROUP: 'primary'
       }
     });
 
@@ -65,9 +66,25 @@ export class PersonalizeSegmentWorkflow extends Construct {
       })
     );
 
+    // Athenaへのアクセス権限を付与
+    this.createPersonalizeSegmentFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          'athena:StartQueryExecution',
+          'athena:GetQueryExecution',
+          'athena:GetQueryResults',
+          'glue:GetTable',
+          'glue:GetPartitions',
+          'glue:GetDatabase'
+        ],
+        resources: ['*']
+      })
+    );
+
     // S3バケットへのアクセス権限を付与
     personalizeService.segmentOutputBucket.grantReadWrite(this.createPersonalizeSegmentFunction);
-    dataStorage.dataBucket.grantReadWrite(this.createPersonalizeSegmentFunction);
+    dataStorage.athenaResultBucket.grantReadWrite(this.createPersonalizeSegmentFunction);
+    dataStorage.dataBucket.grantRead(this.createPersonalizeSegmentFunction);
     // IAM PassRole 権限を追加
     personalizeService.personalizeRole.grantPassRole(this.createPersonalizeSegmentFunction.role!);
     // DynamoDBへのアクセス権限を付与
@@ -141,12 +158,15 @@ export class PersonalizeSegmentWorkflow extends Construct {
       return waitState;
     };
 
+    // 完了状態
+    const completeState = new sfn.Pass(this, 'Complete', {});
+
     // セグメント結果処理タスク
     const processSegmentResultsTask = new tasks.LambdaInvoke(this, 'ProcessSegmentResultsTask', {
       lambdaFunction: this.processSegmentResultsFunction,
       payload: sfn.TaskInput.fromJsonPathAt('$.batchSegmentJobStatusCheck.Payload'),
       resultPath: '$.processSegmentResults'
-    }).next(new sfn.Pass(this, 'Complete', {}));
+    }).next(completeState);
 
     // Create segment task
     const createSegmentTask = new tasks.LambdaInvoke(this, 'CreateSegmentTask', {
@@ -164,8 +184,15 @@ export class PersonalizeSegmentWorkflow extends Construct {
       processSegmentResultsTask
     );
 
-    // セグメント作成タスクを待機ループに接続
-    createSegmentTask.next(batchSegmentJobWaitLoop);
+    // createPersonalizeSegmentFunctionの結果に基づいて分岐
+    // isCompleted=trueの場合（すべてのitem_idが既に存在する場合）は直接完了状態へ
+    // それ以外の場合はバッチセグメントジョブの待機ループへ
+    const segmentChoiceState = new sfn.Choice(this, 'IsSegmentAlreadyComplete')
+      .when(sfn.Condition.booleanEquals('$.segmentResult.Payload.isCompleted', true), completeState)
+      .otherwise(batchSegmentJobWaitLoop);
+
+    // セグメント作成タスクを分岐に接続
+    createSegmentTask.next(segmentChoiceState);
 
     // Create the state machine
     this.stateMachine = new sfn.StateMachine(this, 'SegmentStateMachine', {

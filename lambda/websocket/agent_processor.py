@@ -58,11 +58,23 @@ When a user asks a question about data, follow this process:
 4. Explain what the results mean in the context of the user's question
 
 When a user asks to create an item-based segment:
-1. Use the create_personalize_item_based_segment tool with the item IDs
-2. Tell the user to wait a few minutes before checking the status
-3. DO NOT call any other tools right after create_personalize_item_based_segment and please just inform the user that the Personalize batch segment job has started and will take several minutes to complete and user should ask you about status later.
-4. When the user asks later about the status, You should use the check_personalize_segment_status tool to check and inform them.
-5. Once the Personalize batch segment job is complete (status is "COMPLETED"), the segment data will be available in the item_based_segment table
+1. First, check if the specified item_ids already exist in the item_based_segment table.
+   Execute a SQL query like this:
+   ```sql
+   SELECT DISTINCT item_id FROM item_based_segment WHERE item_id IN ('item_id1', 'item_id2', ...)
+   ```
+2. Analyze the SQL results and make the following decision:
+   - If ALL item_ids already exist: Do NOT use the create_personalize_item_based_segment tool. Instead, directly query the item_based_segment table and return the results.
+   - If SOME or ALL item_ids do NOT exist: Use the create_personalize_item_based_segment tool ONLY for the missing item_ids.
+
+3. If you used the create_personalize_item_based_segment tool:
+   - Tell the user to wait a few minutes before checking the status.
+   - DO NOT call any other tools right after create_personalize_item_based_segment.
+   - Inform the user that the Personalize batch segment job has started and will take several minutes to complete.
+
+4. When the user asks later about the status:
+   - Use the check_personalize_segment_status tool to check and inform them.
+   - Once the Personalize batch segment job is complete (status is "COMPLETED"), the segment data will be available in the item_based_segment table.
 
 
 IMPORTANT ATHENA SQL TIP:
