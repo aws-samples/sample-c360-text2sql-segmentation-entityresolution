@@ -3,8 +3,8 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime
 from typing import Dict, Any, List
+from sessionutils import get_conversation_history, save_conversation_history, filter_messages_for_response, get_active_connection_id
 
 from strands import Agent, tool
 from strands.models import BedrockModel
@@ -20,15 +20,11 @@ glue = boto3.client("glue")
 sfn = boto3.client("stepfunctions")
 
 # Required environment variables
-SESSION_TABLE = os.environ["SESSION_TABLE"]
 ATHENA_DATABASE = os.environ["ATHENA_DATABASE"]
 ATHENA_OUTPUT_LOCATION = os.environ["ATHENA_OUTPUT_LOCATION"]
 ATHENA_WORKGROUP = os.environ["ATHENA_WORKGROUP"]
 SEGMENT_STATE_MACHINE_ARN = os.environ["SEGMENT_STATE_MACHINE_ARN"]
 SOLUTION_VERSION_TABLE = os.environ["SOLUTION_VERSION_TABLE"]
-
-# DynamoDB tables
-session_table = dynamodb.Table(SESSION_TABLE)
 
 # Bedrock model setup
 bedrock_model = BedrockModel(
@@ -531,97 +527,7 @@ def get_all_table_information() -> str:
         return f"Error retrieving table information: {str(e)}"
 
 
-def get_conversation_history(user_id: str, session_id: str) -> List[Dict]:
-    """
-    Retrieve conversation history for a specific user and session from DynamoDB.
-
-    Args:
-        user_id: The ID of the user
-        session_id: The ID of the session
-
-    Returns:
-        A list of message dictionaries in the format expected by the Agent
-    """
-    try:
-        response = session_table.get_item(Key={"user_id": user_id, "session_id": session_id})
-
-        if "Item" in response and "messages" in response["Item"]:
-            return response["Item"]["messages"]
-        else:
-            return []
-
-    except Exception as e:
-        logger.error(f"Error retrieving conversation history: {str(e)}")
-        return []
-
-
-def save_conversation_history(user_id: str, session_id: str, messages: List[Dict]) -> bool:
-    """
-    Save conversation history for a specific user and session to DynamoDB.
-
-    Args:
-        user_id: The ID of the user
-        session_id: The ID of the session
-        messages: The list of message dictionaries from the Agent
-
-    Returns:
-        True if successful, False otherwise
-    """
-    try:
-        session_table.put_item(
-            Item={"user_id": user_id, "session_id": session_id, "messages": messages, "last_updated": datetime.now().isoformat()}
-        )
-        return True
-
-    except Exception as e:
-        logger.error(f"Error saving conversation history: {str(e)}")
-        return False
-
-
-def filter_messages_for_response(messages):
-    """
-    Filter and process messages for client response, maintaining original message order.
-
-    This function processes the conversation messages and handles special cases:
-    - Keeps regular conversation messages
-    - Converts downloadable URL tool results to special URL messages
-    - Filters out other tool use and tool result messages
-
-    Args:
-        messages: List of message dictionaries from the conversation
-
-    Returns:
-        List of filtered messages in their original order
-    """
-    filtered_messages = []
-    tool_use_map = {}
-
-    # First pass: identify all downloadable URL tool uses
-    for message in messages:
-        for content_item in message.get("content", []):
-            if "toolUse" in content_item and content_item["toolUse"].get("name") == "create_downloadable_url":
-                tool_use_id = content_item["toolUse"].get("toolUseId")
-                if tool_use_id:
-                    tool_use_map[tool_use_id] = True
-
-    # Second pass: process messages in original order
-    for message in messages:
-        contents = message.get("content", [])
-
-        # Check if this is a regular message (no tool use/result)
-        if all("toolUse" not in item and "toolResult" not in item for item in contents):
-            filtered_messages.append(message)
-            continue
-
-        # Check for downloadable URL tool result
-        for content_item in contents:
-            if "toolResult" in content_item and content_item["toolResult"].get("toolUseId") in tool_use_map:
-                # Create and add special URL message
-                url_text = content_item["toolResult"]["content"][0].get("text", "")
-                filtered_messages.append({"role": "url", "content": [{"text": url_text}]})
-                break
-
-    return filtered_messages
+# filter_messages_for_response is now imported from sessionutils
 
 
 def send_to_connection(connection_id, data, api_gateway_endpoint):
@@ -695,27 +601,40 @@ def handler(event, context):
         # Filter messages for response
         conversation_history = filter_messages_for_response(agent.messages)
 
+        # 最新のconnection_idを取得（接続が切れて再接続した場合に備えて）
+        current_connection_id = get_active_connection_id(user_id, session_id) or connection_id
+
         # Send the response to the client
-        send_to_connection(
-            connection_id,
-            {
-                "type": "response",
-                "user_id": user_id,
-                "session_id": session_id,
-                "response": str(agent_response),
-                "conversation_history": conversation_history,
-            },
-            api_gateway_endpoint,
-        )
+        try:
+            send_to_connection(
+                current_connection_id,
+                {
+                    "type": "response",
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "response": str(agent_response),
+                    "conversation_history": conversation_history,
+                },
+                api_gateway_endpoint,
+            )
+            logger.info(f"Response sent to connection {current_connection_id}")
+        except Exception as e:
+            logger.warning(f"Could not send response to connection {current_connection_id}: {str(e)}")
+            # 接続エラーが発生した場合、結果は既にDynamoDBに保存されているので問題ない
 
         return {"statusCode": 200, "body": "Processing complete"}
 
     except Exception as e:
         logger.error(f"Error in agent processor: {str(e)}")
 
+        # 最新のconnection_idを取得（接続が切れて再接続した場合に備えて）
+        current_connection_id = get_active_connection_id(user_id, session_id) or connection_id
+
         # Send error message to client
         try:
-            send_to_connection(connection_id, {"type": "error", "message": f"Error processing your request: {str(e)}"}, api_gateway_endpoint)
+            send_to_connection(
+                current_connection_id, {"type": "error", "message": f"Error processing your request: {str(e)}"}, api_gateway_endpoint
+            )
         except Exception as send_error:
             logger.error(f"Error sending error message: {str(send_error)}")
 

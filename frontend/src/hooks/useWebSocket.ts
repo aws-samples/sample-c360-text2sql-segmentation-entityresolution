@@ -25,7 +25,7 @@ const useWebSocket = () => {
     if (heartbeatIntervalRef.current) {
       clearInterval(heartbeatIntervalRef.current);
     }
-    
+
     // Set up new heartbeat interval - 3 minutes (180000 ms)
     heartbeatIntervalRef.current = setInterval(() => {
       if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -33,7 +33,7 @@ const useWebSocket = () => {
         socketRef.current.send(JSON.stringify({ type: 'ping' }));
       }
     }, 180000); // 3 minutes
-    
+
     return () => {
       if (heartbeatIntervalRef.current) {
         clearInterval(heartbeatIntervalRef.current);
@@ -43,9 +43,10 @@ const useWebSocket = () => {
   }, []);
 
   // Connect to WebSocket with authentication and wait for connection to establish
-  const connect = useCallback(async () => {
+  const connect = async (sessionId?: string) => {
+    console.log('Connecting...');
     try {
-      if (socketRef.current?.readyState === WebSocket.OPEN) {
+      if (socketRef.current?.readyState === WebSocket.OPEN || socketRef.current?.readyState === WebSocket.CONNECTING) {
         console.log('WebSocket already connected');
         return;
       }
@@ -61,13 +62,18 @@ const useWebSocket = () => {
       }
 
       // Create WebSocket connection with token for authentication
-      const url = `${wsUrl}?token=${encodeURIComponent(idToken)}`;
+      let url = `${wsUrl}?token=${encodeURIComponent(idToken)}`;
+
+      // セッションIDが提供された場合、URLに追加
+      if (sessionId) {
+        url += `&session_id=${encodeURIComponent(sessionId)}`;
+      }
       socketRef.current = new WebSocket(url);
 
       socketRef.current.onopen = () => {
         console.log('WebSocket connected');
         setIsConnected(true);
-        
+
         // Start heartbeat when connection is established
         startHeartbeat();
       };
@@ -89,7 +95,10 @@ const useWebSocket = () => {
       };
 
       socketRef.current.onclose = (event) => {
-        console.log(`WebSocket disconnected: code=${event.code}, reason=${event.reason}, wasClean=${event.wasClean}`, event);
+        console.log(
+          `WebSocket disconnected: code=${event.code}, reason=${event.reason}, wasClean=${event.wasClean}`,
+          event
+        );
         setIsConnected(false);
 
         // Stop heartbeat on disconnect
@@ -103,10 +112,11 @@ const useWebSocket = () => {
           clearTimeout(reconnectTimeoutRef.current);
         }
 
-        // reconnectTimeoutRef.current = setTimeout(() => {
-        //   console.log('Attempting to reconnect WebSocket...');
-        //   connect();
-        // }, 3000);
+        reconnectTimeoutRef.current = setTimeout(() => {
+          console.log('Attempting to reconnect WebSocket...');
+          // 保存されたセッションIDを使用して再接続
+          connect(sessionId);
+        }, 3000);
       };
 
       socketRef.current.onerror = (error) => {
@@ -140,10 +150,11 @@ const useWebSocket = () => {
       setShowError(true);
       throw error;
     }
-  }, [setShowError, wsUrl, startHeartbeat]);
+  };
 
   // Disconnect from WebSocket
   const disconnect = useCallback(() => {
+    console.log('Disconnecting...');
     // Stop heartbeat
     if (heartbeatIntervalRef.current) {
       clearInterval(heartbeatIntervalRef.current);
@@ -165,11 +176,6 @@ const useWebSocket = () => {
 
   const sendData = async (payload: any) => {
     try {
-      if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
-        console.log('WebSocket not connected, attempting to connect...');
-        await connect();
-      }
-
       console.log('Sending data via WebSocket:', payload);
       socketRef.current?.send(JSON.stringify(payload));
     } catch (error) {
@@ -178,15 +184,6 @@ const useWebSocket = () => {
       throw error;
     }
   };
-
-  // Connect on component mount, disconnect on unmount
-  useEffect(() => {
-    connect();
-
-    return () => {
-      disconnect();
-    };
-  }, [connect, disconnect]);
 
   return {
     isConnected,
