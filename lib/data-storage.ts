@@ -203,7 +203,8 @@ export class DataStorage extends Construct {
         {
           name: 'MatchID',
           type: glueAlpha.Schema.STRING,
-          comment: 'マッチしたレコードをグループ化するID。メインブランドとサブブランドで同じ顧客には同じ値となる'
+          comment:
+            'マッチしたレコードをグループ化するID。メインブランドとサブブランドで同じ顧客には同じ値となる。この値をSELECTに含める場合は結果にDISTINCTをつけること推奨。'
         }
       ],
       parameters: { 'skip.header.line.count': '1' },

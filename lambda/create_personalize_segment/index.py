@@ -3,6 +3,7 @@ import boto3
 import json
 import uuid
 import logging
+import time
 from datetime import datetime
 
 DATASET_GROUP_ARN = os.environ["DATASET_GROUP_ARN"]
@@ -12,58 +13,104 @@ OUTPUT_PREFIX = os.environ["OUTPUT_PREFIX"]
 PERSONALIZE_ROLE_ARN = os.environ["PERSONALIZE_ROLE_ARN"]
 USER_PER_SEGMENT = os.environ.get("USER_PER_SEGMENT", "100")
 SOLUTION_VERSION_TABLE = os.environ["SOLUTION_VERSION_TABLE"]
-TARGET_BUCKET = os.environ["TARGET_BUCKET"]  # Bucket to store processed CSV results
-TARGET_PREFIX = os.environ["TARGET_PREFIX"]  # Prefix to store processed CSV results
+ATHENA_DATABASE = os.environ["ATHENA_DATABASE"]  # Athenaデータベース名
+ATHENA_OUTPUT_LOCATION = os.environ["ATHENA_OUTPUT_LOCATION"]  # Athenaクエリ結果の出力先
+ATHENA_WORKGROUP = os.environ["ATHENA_WORKGROUP"]  # Athenaワークグループ
 
 s3 = boto3.client("s3")
 personalize = boto3.client("personalize")
 dynamodb = boto3.resource("dynamodb")
+athena = boto3.client("athena")
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 
-def delete_existing_csv_files(bucket, prefix):
+def check_existing_items(item_ids):
     """
-    指定したバケットとプレフィックスに一致するCSVファイルを全て削除する
+    item_based_segmentテーブルに既に存在するitem_idをチェックする
 
     Args:
-        bucket: S3バケット名
-        prefix: S3オブジェクトプレフィックス
+        item_ids: チェックするitem_idのリスト
+
+    Returns:
+        既に存在するitem_idのリスト
     """
+    if not item_ids:
+        return []
+
     try:
-        # Paginatorを使用して全てのオブジェクトを取得
-        paginator = s3.get_paginator("list_objects_v2")
-        pages = paginator.paginate(Bucket=bucket, Prefix=prefix)
+        # item_idのリストをカンマ区切りの文字列に変換
+        item_ids_str = ", ".join([f"'{item_id}'" for item_id in item_ids])
 
-        # 削除対象のオブジェクトを収集
-        objects_to_delete = []
+        # Athenaクエリを実行
+        query = f"SELECT DISTINCT item_id FROM item_based_segment WHERE item_id IN ({item_ids_str})"
+        logger.info(f"Executing Athena query: {query}")
 
-        for page in pages:
-            if "Contents" not in page:
-                continue
+        response = athena.start_query_execution(
+            QueryString=query,
+            QueryExecutionContext={"Database": ATHENA_DATABASE},
+            ResultConfiguration={"OutputLocation": ATHENA_OUTPUT_LOCATION},
+            WorkGroup=ATHENA_WORKGROUP,
+        )
 
-            for obj in page.get("Contents", []):
-                key = obj["Key"]
+        query_execution_id = response["QueryExecutionId"]
 
-                # CSVファイルのみを対象にする
-                if key.endswith(".csv"):
-                    objects_to_delete.append({"Key": key})
+        # クエリの完了を待つ
+        query_status = wait_for_query_completion(query_execution_id)
 
-        # オブジェクトを削除
-        if objects_to_delete:
-            logger.info(f"Deleting {len(objects_to_delete)} existing CSV files")
+        if query_status == "SUCCEEDED":
+            # クエリ結果を取得
+            results = athena.get_query_results(QueryExecutionId=query_execution_id)
 
-            # S3のdelete_objectsは1000オブジェクトまでしか一度に削除できないため、
-            # 1000オブジェクトごとにバッチ処理
-            for i in range(0, len(objects_to_delete), 1000):
-                batch = objects_to_delete[i : i + 1000]
-                s3.delete_objects(Bucket=bucket, Delete={"Objects": batch})
+            # 結果からitem_idを抽出
+            existing_items = []
 
-            logger.info(f"Successfully deleted {len(objects_to_delete)} existing CSV files")
+            # 最初の行はヘッダーなのでスキップ
+            for row in results["ResultSet"]["Rows"][1:]:
+                if "Data" in row and row["Data"]:
+                    item_id = row["Data"][0].get("VarCharValue")
+                    if item_id:
+                        existing_items.append(item_id)
+
+            logger.info(f"Found {len(existing_items)} existing items: {existing_items}")
+            return existing_items
+        else:
+            logger.error(f"Athena query failed with status: {query_status}")
+            return []
+
     except Exception as e:
-        logger.error(f"Error deleting existing CSV files: {str(e)}")
-        # 削除に失敗しても処理は続行
+        logger.error(f"Error checking existing items: {str(e)}")
+        return []
+
+
+def wait_for_query_completion(query_execution_id):
+    """
+    Athenaクエリの完了を待つ
+
+    Args:
+        query_execution_id: クエリ実行ID
+
+    Returns:
+        クエリの最終状態（'SUCCEEDED', 'FAILED', 'CANCELLED'など）
+    """
+
+    max_retries = 60
+    retry_count = 0
+
+    while retry_count < max_retries:
+        response = athena.get_query_execution(QueryExecutionId=query_execution_id)
+        state = response["QueryExecution"]["Status"]["State"]
+        if state in ["SUCCEEDED", "FAILED", "CANCELLED"]:
+            logger.info("response of athena")
+            logger.info(response)
+
+            return state
+
+        retry_count += 1
+        time.sleep(3)  # 3秒待機
+
+    return "TIMEOUT"
 
 
 def handler(event, context):
@@ -79,10 +126,6 @@ def handler(event, context):
         Dictionary containing job details and status
     """
     try:
-        # Delete existing CSV files (replacement method)
-        logger.info(f"Deleting existing CSV files from {TARGET_BUCKET}/{TARGET_PREFIX}")
-        delete_existing_csv_files(TARGET_BUCKET, TARGET_PREFIX)
-
         # Get item_ids from the event
         item_ids = event.get("item_ids", [])
 
@@ -90,6 +133,23 @@ def handler(event, context):
             raise ValueError("item_ids is required and cannot be empty")
 
         logger.info(f"Creating segment for item_ids: {item_ids}")
+
+        # 既存のitem_idをチェック
+        existing_items = check_existing_items(item_ids)
+
+        # 既存のitem_idを除外
+        new_item_ids = [item_id for item_id in item_ids if item_id not in existing_items]
+
+        if not new_item_ids:
+            logger.info("All requested item_ids already exist in item_based_segment table. No new segments to create.")
+            return {
+                "message": "All requested item_ids already exist in item_based_segment table. No new segments created.",
+                "isCompleted": True,
+                "existingItems": existing_items,
+            }
+
+        logger.info(f"Creating segments for {len(new_item_ids)} new items: {new_item_ids}")
+        logger.info(f"Skipping {len(existing_items)} existing items: {existing_items}")
 
         # Get solution version ARN from DynamoDB and update segment job status
         try:
@@ -114,7 +174,7 @@ def handler(event, context):
         # Create JSON input file in the correct format for batch segment job
         # Each line should be in format: {"itemId": "ITEM_ID"}
         json_input = []
-        for item_id in item_ids:
+        for item_id in new_item_ids:  # 新しいitem_idのみを使用
             json_input.append(json.dumps({"itemId": item_id}))
 
         # Join with newlines to create the proper input format
