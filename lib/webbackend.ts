@@ -161,11 +161,6 @@ export class WebBackend extends Construct {
       }
     });
 
-    // Add the chat route
-    this.webSocketApi.addRoute('chat', {
-      integration: new apigatewayv2_integrations.WebSocketLambdaIntegration('ChatIntegration', this.websocketHandler)
-    });
-
     // Deploy the WebSocket API to a stage
     this.webSocketStage = new apigatewayv2.WebSocketStage(this, 'WebSocketStage', {
       webSocketApi: this.webSocketApi,

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import useWebSocket from './useWebSocket';
 import { useStore } from './store';
 
@@ -29,8 +29,37 @@ const useChat = (userId: string) => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const { setShowError } = useStore();
 
-  // Use the WebSocket hook
-  const { isConnected, lastMessage, sendData } = useWebSocket();
+  // Use the WebSocket store
+  const { isConnected, lastMessage, sendData, connect, disconnect } = useWebSocket();
+
+  // 接続時に会話履歴を取得する
+  const fetchHistory = (sessionId: string) => {
+    console.log('Fetching conversation history for session:', sessionId);
+    sendData({
+      type: 'fetch_history',
+      session_id: sessionId
+    });
+  };
+
+  // useRefを使用して接続が既に実行されたかどうかを追跡
+  const hasConnectedRef = useRef(false);
+
+  useEffect(() => {
+    // 初回のみ接続を実行
+    if (!hasConnectedRef.current && !isConnected) {
+      console.log('Initial connection attempt');
+      connect(sessionId);
+      hasConnectedRef.current = true;
+    }
+  }, []);
+
+  // WebSocket接続時にセッションIDを渡す
+  useEffect(() => {
+    // 接続状態が変わったときに会話履歴を取得
+    if (isConnected) {
+      fetchHistory(sessionId);
+    }
+  }, [isConnected]);
 
   // Update messages when we get a response from WebSocket
   useEffect(() => {
@@ -72,7 +101,7 @@ const useChat = (userId: string) => {
 
     try {
       const chatPayload = {
-        action: 'chat',
+        type: 'chat',
         message: content,
         session_id: sessionId
       };

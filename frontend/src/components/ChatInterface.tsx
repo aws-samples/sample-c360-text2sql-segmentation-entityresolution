@@ -27,7 +27,6 @@ interface ChatInterfaceProps {
 const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId }) => {
   const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
   // Pass userId to useChat hook
   const { messages, isLoading, isConnected, sendMessage } = useChat(userId);
 

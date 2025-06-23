@@ -2,20 +2,22 @@ import boto3
 import json
 import logging
 import os
+from datetime import datetime
+from sessionutils import (
+    get_conversation_history,
+    filter_messages_for_response,
+    update_session_connection,
+    find_sessions_by_connection_id,
+)
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# DynamoDB clients
-dynamodb = boto3.resource("dynamodb")
+# AWS clients
 lambda_client = boto3.client("lambda")
 
 # Environment variables
-SESSION_TABLE = os.environ["SESSION_TABLE"]
 AGENT_PROCESSOR_FUNCTION_NAME = os.environ["AGENT_PROCESSOR_FUNCTION_NAME"]
-
-# DynamoDB tables
-session_table = dynamodb.Table(SESSION_TABLE)
 
 
 def handler(event, context):
@@ -31,19 +33,25 @@ def handler(event, context):
     if not connection_id:
         return {"statusCode": 400, "body": "Missing connectionId"}
 
-    # Handle different route types
+    # Handle system route types
     if route_key == "$connect":
         return handle_connect(event, connection_id)
     elif route_key == "$disconnect":
         return handle_disconnect(connection_id)
-    elif route_key == "chat":
-        return handle_chat(event, connection_id)
     else:
-        # Check if this is a ping message
+        # Handle all messages based on type in the body
         try:
             body = json.loads(event.get("body", "{}"))
-            if body.get("type") == "ping":
+            message_type = body.get("type")
+
+            if message_type == "chat":
+                return handle_chat(event, connection_id)
+            elif message_type == "ping":
                 return handle_ping(connection_id, event)
+            elif message_type == "fetch_history":
+                return handle_fetch_history(event, connection_id)
+            else:
+                logger.warning(f"Unknown message type: {message_type}")
         except Exception as e:
             logger.error(f"Error parsing message body: {str(e)}")
 
@@ -53,6 +61,7 @@ def handler(event, context):
 def handle_connect(event, connection_id):
     """
     Handle WebSocket connection event.
+    接続時にsession_idとconnection_idのマッピングを保存する。
     """
     try:
         # Get user ID from authorizer context
@@ -60,7 +69,16 @@ def handle_connect(event, connection_id):
         authorizer = request_context["authorizer"]
         user_id = authorizer["userId"]
 
-        logger.info(f"WebSocket connected: connection_id={connection_id}, user_id={user_id}")
+        # クエリパラメータからsession_idを取得（フロントエンドから提供される）
+        query_params = event.get("queryStringParameters", {}) or {}
+        session_id = query_params.get("session_id")
+
+        logger.info(f"WebSocket connected: connection_id={connection_id}, user_id={user_id}, session_id={session_id}")
+
+        # session_idが提供された場合、セッション接続情報を更新
+        if session_id:
+            update_session_connection(user_id, session_id, connection_id, "connected")
+            logger.info(f"Updated session mapping: session_id={session_id}, connection_id={connection_id}")
 
         return {"statusCode": 200, "body": "Connected"}
     except Exception as e:
@@ -71,9 +89,23 @@ def handle_connect(event, connection_id):
 def handle_disconnect(connection_id):
     """
     Handle WebSocket disconnect event.
+    切断時にConversationSessionTableのconnection_statusを更新する。
     """
     try:
         logger.info(f"WebSocket disconnected: connection_id={connection_id}")
+
+        # このconnection_idを持つセッションを検索
+        sessions = find_sessions_by_connection_id(connection_id)
+
+        # 見つかったセッションのconnection_statusを更新
+        for session in sessions:
+            user_id = session.get("user_id")
+            session_id = session.get("session_id")
+
+            if user_id and session_id:
+                update_session_connection(user_id, session_id, connection_id, "disconnected")
+                logger.info(f"Updated session status to disconnected: user_id={user_id}, session_id={session_id}")
+
         return {"statusCode": 200, "body": "Disconnected"}
     except Exception as e:
         logger.error(f"Error in handle_disconnect: {str(e)}")
@@ -157,6 +189,47 @@ def handle_ping(connection_id, event):
         return {"statusCode": 500, "body": f"Error: {str(e)}"}
 
 
+def handle_fetch_history(event, connection_id):
+    """
+    会話履歴を取得するためのハンドラー
+    """
+    try:
+        # メッセージボディを解析
+        body = json.loads(event.get("body", "{}"))
+        request_context = event["requestContext"]
+        authorizer = request_context["authorizer"]
+        user_id = authorizer["userId"]
+        session_id = body.get("session_id")
+
+        if not session_id:
+            send_to_connection(connection_id, {"type": "error", "message": "No session_id provided"})
+            return {"statusCode": 400, "body": "No session_id provided"}
+
+        logger.info(f"Fetching conversation history for user_id={user_id}, session_id={session_id}")
+
+        # 会話履歴を取得
+        conversation_history = get_conversation_history(user_id, session_id)
+
+        # フィルタリングされた会話履歴を取得
+        filtered_history = filter_messages_for_response(conversation_history)
+
+        api_gateway_endpoint = get_api_endpoint(event)
+
+        # 会話履歴を送信
+        send_to_connection(
+            connection_id,
+            {"type": "history", "user_id": user_id, "session_id": session_id, "conversation_history": filtered_history},
+            api_gateway_endpoint,
+        )
+
+        return {"statusCode": 200, "body": "History fetched"}
+    except Exception as e:
+        logger.error(f"Error in handle_fetch_history: {str(e)}")
+        api_gateway_endpoint = get_api_endpoint(event)
+        send_to_connection(connection_id, {"type": "error", "message": f"Error fetching history: {str(e)}"}, api_gateway_endpoint)
+        return {"statusCode": 500, "body": f"Error: {str(e)}"}
+
+
 def handle_default(connection_id):
     """
     Handle default route (unknown route key).
@@ -191,47 +264,4 @@ def send_to_connection(connection_id, data, api_gateway_endpoint):
         logger.error(f"Error sending message to connection {connection_id}: {str(e)}")
 
 
-def filter_messages_for_response(messages):
-    """
-    Filter and process messages for client response, maintaining original message order.
-
-    This function processes the conversation messages and handles special cases:
-    - Keeps regular conversation messages
-    - Converts downloadable URL tool results to special URL messages
-    - Filters out other tool use and tool result messages
-
-    Args:
-        messages: List of message dictionaries from the conversation
-
-    Returns:
-        List of filtered messages in their original order
-    """
-    filtered_messages = []
-    tool_use_map = {}
-
-    # First pass: identify all downloadable URL tool uses
-    for message in messages:
-        for content_item in message.get("content", []):
-            if "toolUse" in content_item and content_item["toolUse"].get("name") == "create_downloadable_url":
-                tool_use_id = content_item["toolUse"].get("toolUseId")
-                if tool_use_id:
-                    tool_use_map[tool_use_id] = True
-
-    # Second pass: process messages in original order
-    for message in messages:
-        contents = message.get("content", [])
-
-        # Check if this is a regular message (no tool use/result)
-        if all("toolUse" not in item and "toolResult" not in item for item in contents):
-            filtered_messages.append(message)
-            continue
-
-        # Check for downloadable URL tool result
-        for content_item in contents:
-            if "toolResult" in content_item and content_item["toolResult"].get("toolUseId") in tool_use_map:
-                # Create and add special URL message
-                url_text = content_item["toolResult"]["content"][0].get("text", "")
-                filtered_messages.append({"role": "url", "content": [{"text": url_text}]})
-                break
-
-    return filtered_messages
+# filter_messages_for_response is now imported from sessionutils
