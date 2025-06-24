@@ -19,6 +19,7 @@ import type { Message } from '../hooks/useChat';
 import ReactMarkdown from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github.css';
+import remarkGfm from 'remark-gfm';
 
 interface ChatInterfaceProps {
   userId: string;
@@ -154,7 +155,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId }) => {
                           }
                         }}
                       >
-                        <ReactMarkdown rehypePlugins={[rehypeHighlight]}>{getMessageContent(message)}</ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                          {getMessageContent(message)}
+                        </ReactMarkdown>
                       </Box>
                     </Box>
                   )}
