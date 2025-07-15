@@ -11,6 +11,7 @@ import { PersonalizeSegmentWorkflow } from './personalize-segment-workflow';
 
 export interface AmtC360MarketingStackProps extends cdk.StackProps {
   webAclArn: string;
+  allowOrigin: string;
 }
 
 export class AmtC360MarketingStack extends cdk.Stack {
@@ -52,7 +53,8 @@ export class AmtC360MarketingStack extends cdk.Stack {
     const webBackend = new WebBackend(this, 'WebBackend', {
       dataStorage: dataStorage,
       personalizeSegmentWorkflow: personalizeSegmentWorkflow,
-      personalizeStore: personalizeStore
+      personalizeStore: personalizeStore,
+      allowOrigin: props.allowOrigin
     });
 
     new Frontend(this, 'Frontend', {

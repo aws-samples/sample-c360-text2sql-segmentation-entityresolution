@@ -23,13 +23,21 @@ import remarkGfm from 'remark-gfm';
 
 interface ChatInterfaceProps {
   userId: string;
+  sessionId?: string;
+  initialMessages?: any[];
+  onSessionCreated?: (sessionId: string) => void;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId, sessionId, initialMessages = [], onSessionCreated }) => {
   const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  // Pass userId to useChat hook
-  const { messages, isLoading, isConnected, sendMessage } = useChat(userId);
+  // Pass userId, sessionId, initialMessages, and onSessionCreated to useChat hook
+  const { messages, isLoading, isConnected, sendMessage } = useChat(
+    userId,
+    sessionId,
+    initialMessages,
+    onSessionCreated
+  );
 
   // Scroll to bottom whenever messages change
   useEffect(() => {
@@ -37,7 +45,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId }) => {
   }, [messages]);
 
   const handleSendMessage = () => {
-    if (inputValue.trim() && isConnected) {
+    if (inputValue.trim()) {
       sendMessage(inputValue);
       setInputValue('');
     }
@@ -55,7 +63,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId }) => {
     if (!message.content || !Array.isArray(message.content) || message.content.length === 0) {
       return '';
     }
-
     // Extract text from the first content item
     return message.content[0]?.text || '';
   };
@@ -185,7 +192,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId }) => {
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyPress={handleKeyPress}
-            disabled={isLoading || !isConnected}
+            disabled={isLoading}
             multiline
             maxRows={4}
             sx={{ mr: 1 }}
@@ -195,7 +202,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId }) => {
             color="primary"
             endIcon={<SendIcon />}
             onClick={handleSendMessage}
-            disabled={isLoading || !inputValue.trim() || !isConnected}
+            disabled={isLoading || !inputValue.trim()}
           >
             Send
           </Button>

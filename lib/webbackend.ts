@@ -6,14 +6,17 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as apigatewayv2_integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as apigatewayv2_authorizers from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
+import * as apigw from 'aws-cdk-lib/aws-apigateway';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import { PythonFunction } from '@aws-cdk/aws-lambda-python-alpha';
 import { Cognito } from './cognito';
 import { DataStorage } from './data-storage';
 import { PersonalizeSegmentWorkflow } from './personalize-segment-workflow';
 import { PersonalizeStore } from './solution-version-store';
+import { PublicRestApi } from './public-rest-api';
 
 interface WebBackendProps {
+  allowOrigin: string;
   dataStorage: DataStorage;
   personalizeSegmentWorkflow: PersonalizeSegmentWorkflow;
   personalizeStore: PersonalizeStore;
@@ -22,10 +25,12 @@ interface WebBackendProps {
 export class WebBackend extends Construct {
   public readonly agentProcessor: PythonFunction;
   public readonly websocketHandler: PythonFunction;
+  public readonly restApiHandler: PythonFunction;
   public readonly sessionTable: dynamodb.Table;
   public readonly cognito: Cognito;
   public readonly webSocketApi: apigatewayv2.WebSocketApi;
   public readonly webSocketStage: apigatewayv2.WebSocketStage;
+  public readonly restApi: PublicRestApi;
 
   constructor(scope: Construct, id: string, props: WebBackendProps) {
     super(scope, id);
@@ -40,7 +45,7 @@ export class WebBackend extends Construct {
 
     // Agent processor Lambda function (for async processing)
     this.agentProcessor = new PythonFunction(this, 'AgentProcessor', {
-      entry: 'lambda/websocket',
+      entry: 'lambda/webbackend',
       runtime: lambda.Runtime.PYTHON_3_13,
       index: 'agent_processor.py',
       handler: 'handler',
@@ -58,7 +63,7 @@ export class WebBackend extends Construct {
     });
     // WebSocket handler Lambda function
     this.websocketHandler = new PythonFunction(this, 'WebSocketHandler', {
-      entry: 'lambda/websocket',
+      entry: 'lambda/webbackend',
       runtime: lambda.Runtime.PYTHON_3_13,
       index: 'websocket_handler.py',
       handler: 'handler',
@@ -106,6 +111,22 @@ export class WebBackend extends Construct {
 
     // Grant Lambda invoke permissions
     this.agentProcessor.grantInvoke(this.websocketHandler);
+
+    // セッション履歴取得用のLambda関数
+    this.restApiHandler = new PythonFunction(this, 'RestApiHandler', {
+      entry: 'lambda/webbackend',
+      runtime: lambda.Runtime.PYTHON_3_13,
+      index: 'resthandler.py',
+      handler: 'handler',
+      timeout: cdk.Duration.seconds(30),
+      environment: {
+        SESSION_TABLE: this.sessionTable.tableName,
+        ALLOW_ORIGIN: props.allowOrigin
+      }
+    });
+
+    // セッションテーブルへの読み取り権限を付与
+    this.sessionTable.grantReadData(this.restApiHandler);
 
     // Create Cognito resources
     this.cognito = new Cognito(this, 'Cognito');
@@ -173,6 +194,24 @@ export class WebBackend extends Construct {
 
     new cdk.CfnOutput(this, 'WebSocketApiUrl', {
       value: this.webSocketStage.url
+    });
+
+    // REST APIの作成
+    this.restApi = new PublicRestApi(this, 'PublicRestApi', {
+      allowOrigins: [props.allowOrigin]
+    });
+
+    // Cognitoオーソライザーの作成
+    const authorizer = new apigw.CognitoUserPoolsAuthorizer(this, 'CognitoAuthorizer', {
+      cognitoUserPools: [this.cognito.userPool]
+    });
+
+    // セッション履歴APIエンドポイントの追加
+    this.restApi.addResource('GET', ['sessions'], this.restApiHandler, authorizer);
+    this.restApi.addResource('GET', ['sessions', '{session_id}'], this.restApiHandler, authorizer);
+
+    new cdk.CfnOutput(this, 'RestApiUrl', {
+      value: this.restApi.url
     });
   }
 }

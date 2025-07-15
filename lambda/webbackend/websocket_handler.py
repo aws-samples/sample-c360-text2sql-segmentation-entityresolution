@@ -262,6 +262,3 @@ def send_to_connection(connection_id, data, api_gateway_endpoint):
         logger.info(f"Message sent to connection {connection_id}: {json.dumps(data)}")
     except Exception as e:
         logger.error(f"Error sending message to connection {connection_id}: {str(e)}")
-
-
-# filter_messages_for_response is now imported from sessionutils
