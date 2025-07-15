@@ -56,7 +56,7 @@ def save_conversation_history(user_id: str, session_id: str, messages: list) -> 
     """
     try:
         session_table.put_item(
-            Item={"user_id": user_id, "session_id": session_id, "messages": messages, "last_updated": datetime.now().isoformat()}
+            Item={"user_id": user_id, "session_id": session_id, "messages": messages, "last_updated": int(datetime.now().timestamp())}
         )
         return True
 
@@ -79,15 +79,16 @@ def update_session_connection(user_id: str, session_id: str, connection_id: str,
         更新が成功したかどうか
     """
     try:
-        update_expr = "SET connection_id = :conn_id, connection_status = :status"
-        expr_attr_values = {":conn_id": connection_id, ":status": status}
+        current_time = int(datetime.now().timestamp())
+        update_expr = "SET connection_id = :conn_id, connection_status = :status, last_updated = :updated"
+        expr_attr_values = {":conn_id": connection_id, ":status": status, ":updated": current_time}
 
         if status == "connected":
             update_expr += ", last_connected = :time"
-            expr_attr_values[":time"] = datetime.now().isoformat()
+            expr_attr_values[":time"] = current_time
         else:
             update_expr += ", last_disconnected = :time"
-            expr_attr_values[":time"] = datetime.now().isoformat()
+            expr_attr_values[":time"] = current_time
 
         session_table.update_item(
             Key={"user_id": user_id, "session_id": session_id},

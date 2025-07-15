@@ -58,7 +58,8 @@ export class Frontend extends Construct {
         VITE_APP_REGION: Stack.of(this).region,
         VITE_APP_USER_POOL_ID: props.backend.cognito.userPool.userPoolId,
         VITE_APP_USER_POOL_WEB_CLIENT_ID: props.backend.cognito.userPoolClient.userPoolClientId,
-        VITE_APP_WEBSOCKET_URL: props.backend.webSocketStage.url
+        VITE_APP_WEBSOCKET_URL: props.backend.webSocketStage.url,
+        VITE_APP_BASEURL: props.backend.restApi.url
       }
     });
 

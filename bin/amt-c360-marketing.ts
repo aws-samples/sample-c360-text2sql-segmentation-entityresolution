@@ -13,6 +13,7 @@ const wafStack = new WafStack(app, 'WafStack', {
 
 new AmtC360MarketingStack(app, 'AmtC360MarketingStack', {
   webAclArn: wafStack.webAclArn,
+  allowOrigin: '*',
   crossRegionReferences: true,
   env: { region: process.env.CDK_DEFAULT_REGION }
 });
