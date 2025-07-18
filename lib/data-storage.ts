@@ -6,7 +6,10 @@ import { Construct } from 'constructs';
 /**
  * Data Storage Layer Properties
  */
-export interface DataStorageProps {}
+export interface DataStorageProps {
+  entityResolutionEnabled: boolean;
+  personalizeEnabled: boolean;
+}
 
 /**
  * Data Storage Layer
@@ -147,72 +150,72 @@ export class DataStorage extends Construct {
       bucket: this.dataBucket,
       s3Prefix: 'input/subbrand_customer_master/'
     });
-
-    this.integratedCustomerTablePrefix = 'integratedcustomer/latest';
-    this.integratedCustomerTable = new glueAlpha.S3Table(this, 'IntegratedCustomer', {
-      database: this.glueDatabase,
-      tableName: 'integrated_customer',
-      description: 'メインブランドとサブブランドの顧客レコード間のエンティティ解決から得られた統合顧客データ',
-      columns: [
-        {
-          name: 'InputSourceARN',
-          type: glueAlpha.Schema.STRING,
-          comment:
-            'この顧客レコードを提供したソーステーブルのARN。つまり、customer_masterテーブルとsubbrand_customer_masterテーブルのARN'
-        },
-        {
-          name: 'ConfidenceLevel',
-          type: glueAlpha.Schema.STRING,
-          comment: 'マッチングの信頼性を示す信頼度スコア（0-1）'
-        },
-        {
-          name: 'email',
-          type: glueAlpha.Schema.STRING,
-          comment: '顧客のメールアドレス'
-        },
-        {
-          name: 'firstname',
-          type: glueAlpha.Schema.STRING,
-          comment: '顧客の名前'
-        },
-        {
-          name: 'lastname',
-          type: glueAlpha.Schema.STRING,
-          comment: '顧客の姓'
-        },
-        {
-          name: 'gender',
-          type: glueAlpha.Schema.STRING,
-          comment: '顧客の性別'
-        },
-        {
-          name: 'age',
-          type: glueAlpha.Schema.INTEGER,
-          comment: '顧客の年齢'
-        },
-        {
-          name: 'created_at',
-          type: glueAlpha.Schema.INTEGER,
-          comment: 'ソースシステムで顧客レコードが作成された元のUNIXタイムスタンプ'
-        },
-        {
-          name: 'RecordId',
-          type: glueAlpha.Schema.STRING,
-          comment: 'ソースシステムからの元の顧客ID。それぞれのテーブルのcustomer_idとJOIN可能'
-        },
-        {
-          name: 'MatchID',
-          type: glueAlpha.Schema.STRING,
-          comment:
-            'マッチしたレコードをグループ化するID。メインブランドとサブブランドで同じ顧客には同じ値となる。この値をSELECTに含める場合は結果にDISTINCTをつけること推奨。'
-        }
-      ],
-      parameters: { 'skip.header.line.count': '1' },
-      dataFormat: glueAlpha.DataFormat.CSV,
-      bucket: this.dataBucket,
-      s3Prefix: this.integratedCustomerTablePrefix
-    });
-
+    if (props.entityResolutionEnabled) {
+      this.integratedCustomerTablePrefix = 'integratedcustomer/latest';
+      this.integratedCustomerTable = new glueAlpha.S3Table(this, 'IntegratedCustomer', {
+        database: this.glueDatabase,
+        tableName: 'integrated_customer',
+        description: 'メインブランドとサブブランドの顧客レコード間のエンティティ解決から得られた統合顧客データ',
+        columns: [
+          {
+            name: 'InputSourceARN',
+            type: glueAlpha.Schema.STRING,
+            comment:
+              'この顧客レコードを提供したソーステーブルのARN。つまり、customer_masterテーブルとsubbrand_customer_masterテーブルのARN'
+          },
+          {
+            name: 'ConfidenceLevel',
+            type: glueAlpha.Schema.STRING,
+            comment: 'マッチングの信頼性を示す信頼度スコア（0-1）'
+          },
+          {
+            name: 'email',
+            type: glueAlpha.Schema.STRING,
+            comment: '顧客のメールアドレス'
+          },
+          {
+            name: 'firstname',
+            type: glueAlpha.Schema.STRING,
+            comment: '顧客の名前'
+          },
+          {
+            name: 'lastname',
+            type: glueAlpha.Schema.STRING,
+            comment: '顧客の姓'
+          },
+          {
+            name: 'gender',
+            type: glueAlpha.Schema.STRING,
+            comment: '顧客の性別'
+          },
+          {
+            name: 'age',
+            type: glueAlpha.Schema.INTEGER,
+            comment: '顧客の年齢'
+          },
+          {
+            name: 'created_at',
+            type: glueAlpha.Schema.INTEGER,
+            comment: 'ソースシステムで顧客レコードが作成された元のUNIXタイムスタンプ'
+          },
+          {
+            name: 'RecordId',
+            type: glueAlpha.Schema.STRING,
+            comment: 'ソースシステムからの元の顧客ID。それぞれのテーブルのcustomer_idとJOIN可能'
+          },
+          {
+            name: 'MatchID',
+            type: glueAlpha.Schema.STRING,
+            comment:
+              'マッチしたレコードをグループ化するID。メインブランドとサブブランドで同じ顧客には同じ値となる。この値をSELECTに含める場合は結果にDISTINCTをつけること推奨。'
+          }
+        ],
+        parameters: { 'skip.header.line.count': '1' },
+        dataFormat: glueAlpha.DataFormat.CSV,
+        bucket: this.dataBucket,
+        s3Prefix: this.integratedCustomerTablePrefix
+      });
+    }
     this.itemMasterTable = new glueAlpha.S3Table(this, 'ItemMaster', {
       database: this.glueDatabase,
       tableName: 'item_master',
@@ -353,28 +356,33 @@ export class DataStorage extends Construct {
       s3Prefix: 'input/subbrand_purchase_history/'
     });
 
-    this.itemBasedSegmentPrefix = 'item_based_segment/';
-    this.itemBasedSegmentTable = new glueAlpha.S3Table(this, 'ItemBasedSegment', {
-      database: this.glueDatabase,
-      tableName: 'item_based_segment',
-      description:
-        'Personalizeバッチセグメントジョブから生成された顧客セグメント結果。特定のアイテムを購入しそうな顧客リストを得たい時にこのテーブルを参照する。Personalizeバッチセグメントジョブではサブブランドのitem_idは入れられない。',
-      columns: [
-        {
-          name: 'item_id',
-          type: glueAlpha.Schema.STRING,
-          comment: '商品ID。item_masterのitem_idとJOIN可能。'
-        },
-        {
-          name: 'user_id',
-          type: glueAlpha.Schema.STRING,
-          comment: '顧客ID（MatchID）。integrated_customer_masterのMatchIDとJOIN可能'
-        }
-      ],
-      parameters: { 'skip.header.line.count': '1' },
-      dataFormat: glueAlpha.DataFormat.CSV,
-      bucket: this.dataBucket,
-      s3Prefix: this.itemBasedSegmentPrefix
-    });
+    if (props.personalizeEnabled) {
+      this.itemBasedSegmentPrefix = 'item_based_segment/';
+      this.itemBasedSegmentTable = new glueAlpha.S3Table(this, 'ItemBasedSegment', {
+        database: this.glueDatabase,
+        tableName: 'item_based_segment',
+        description:
+          'Personalizeバッチセグメントジョブから生成された顧客セグメント結果。特定のアイテムを購入しそうな顧客リストを得たい時にこのテーブルを参照する。Personalizeバッチセグメントジョブではサブブランドのitem_idは入れられない。',
+        columns: [
+          {
+            name: 'item_id',
+            type: glueAlpha.Schema.STRING,
+            comment: '商品ID。item_masterのitem_idとJOIN可能。'
+          },
+          {
+            name: 'user_id',
+            type: glueAlpha.Schema.STRING,
+            comment:
+              '顧客ID（MatchID）。' + props.entityResolutionEnabled
+                ? 'integrated_customer_masterのMatchIDとJOIN可能'
+                : 'customer_masterのMatchIDとJOIN可能'
+          }
+        ],
+        parameters: { 'skip.header.line.count': '1' },
+        dataFormat: glueAlpha.DataFormat.CSV,
+        bucket: this.dataBucket,
+        s3Prefix: this.itemBasedSegmentPrefix
+      });
+    }
   }
 }

@@ -24,8 +24,17 @@
 ![arch](docs/imgs/architecture.drawio.png)
 
 
-## デプロイ方法
+## デプロイオプション
 
+下記のデプロイオプションが設定可能です。[cdk.json](./cdk.json) を開き、それぞれをtrue/falseで設定してください。
+
+- AWS Entity Resolution を利用するかどうか: entityResolutionEnabled
+- Amazon Personalize を利用するかどうか: personalizeEnabled なお、entityResolutionEnabled が true の場合のみ利用可能です
+
+
+
+
+## デプロイ方法
 
 1. クレデンシャルの設定
 
