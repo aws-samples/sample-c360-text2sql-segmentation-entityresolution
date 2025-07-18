@@ -12,6 +12,8 @@ import { PersonalizeSegmentWorkflow } from './personalize-segment-workflow';
 export interface AmtC360MarketingStackProps extends cdk.StackProps {
   webAclArn: string;
   allowOrigin: string;
+  entityResolutionEnabled: boolean;
+  personalizeEnabled: boolean;
 }
 
 export class AmtC360MarketingStack extends cdk.Stack {
@@ -19,20 +21,28 @@ export class AmtC360MarketingStack extends cdk.Stack {
     super(scope, id, props);
 
     // Create data storage layer
-    const dataStorage = new DataStorage(this, 'DataStorage', {});
+    const dataStorage = new DataStorage(this, 'DataStorage', {
+      entityResolutionEnabled: props.entityResolutionEnabled,
+      personalizeEnabled: props.personalizeEnabled
+    });
 
     // Create Entity Resolution
-    const entityResolutionService = new EntityResolutionService(this, 'EntityResolution', {
-      dataStorage
-    });
+
+    const entityResolutionService = props.entityResolutionEnabled
+      ? new EntityResolutionService(this, 'EntityResolution', {
+          dataStorage
+        })
+      : undefined;
 
     // Create Personalize service
-    const personalizeService = new PersonalizeService(this, 'PersonalizeService', {
-      dataStorage
-    });
+    const personalizeService = props.personalizeEnabled
+      ? new PersonalizeService(this, 'PersonalizeService', {
+          dataStorage
+        })
+      : undefined;
 
     // Create personalize store
-    const personalizeStore = new PersonalizeStore(this, 'PersonalizeStore', {});
+    const personalizeStore = props.personalizeEnabled ? new PersonalizeStore(this, 'PersonalizeStore', {}) : undefined;
 
     // Create data integration workflow execution layer
     new DataIntegrationWorkflow(this, 'DataIntegrationWorkflow', {
@@ -43,11 +53,15 @@ export class AmtC360MarketingStack extends cdk.Stack {
     });
 
     // Create personalize segment workflow
-    const personalizeSegmentWorkflow = new PersonalizeSegmentWorkflow(this, 'PersonalizeSegmentWorkflow', {
-      dataStorage,
-      personalizeService,
-      personalizeStore
-    });
+
+    const personalizeSegmentWorkflow =
+      personalizeService && personalizeStore
+        ? new PersonalizeSegmentWorkflow(this, 'PersonalizeSegmentWorkflow', {
+            dataStorage,
+            personalizeService,
+            personalizeStore
+          })
+        : undefined;
 
     // Create Web backend layer
     const webBackend = new WebBackend(this, 'WebBackend', {

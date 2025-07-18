@@ -23,8 +23,9 @@ sfn = boto3.client("stepfunctions")
 ATHENA_DATABASE = os.environ["ATHENA_DATABASE"]
 ATHENA_OUTPUT_LOCATION = os.environ["ATHENA_OUTPUT_LOCATION"]
 ATHENA_WORKGROUP = os.environ["ATHENA_WORKGROUP"]
-SEGMENT_STATE_MACHINE_ARN = os.environ["SEGMENT_STATE_MACHINE_ARN"]
-SOLUTION_VERSION_TABLE = os.environ["SOLUTION_VERSION_TABLE"]
+SEGMENT_STATE_MACHINE_ARN = os.environ.get("SEGMENT_STATE_MACHINE_ARN")
+SOLUTION_VERSION_TABLE = os.environ.get("SOLUTION_VERSION_TABLE")
+USE_PERSONALIZE = SEGMENT_STATE_MACHINE_ARN and SOLUTION_VERSION_TABLE
 
 # Bedrock model setup
 bedrock_model = BedrockModel(
@@ -34,29 +35,24 @@ bedrock_model = BedrockModel(
 # SQL result threshold
 SQL_RESULT_THRESHOLD = 300
 
-# Agent instruction
-AGENT_INSTRUCTION = """
-You are an advanced SQL Assistant that helps users query data using Amazon Athena.
+# Personalize-specific additions
+AGENT_INSTRUCTION_ADDITIONAL_ROLE = (
+    """
+5. Create Amazon Personalize item-based segments when requested"""
+    if USE_PERSONALIZE
+    else ""
+)
 
-Your primary role is to:
-1. Understand natural language requests about data
-2. Convert these requests into proper SQL queries for Athena
-3. Execute these queries and present the results in a clear, readable format
-4. Explain the results when appropriate
-5. Create Amazon Personalize item-based segments when requested
-
-You have access to the following tools:
-- execute_sql_query: Executes a SQL query on Athena and returns the results
-- create_downloadable_url: Creates a downloadable URL for query results
+AGENT_INSTRUCTION_ADDITIONAL_TOOLS = (
+    """
 - create_personalize_item_based_segment: Creates an item-based segment using Amazon Personalize's batch segment job
-- check_personalize_segment_status: Checks the status of the Amazon Personalize batch segment job
+- check_personalize_segment_status: Checks the status of the Amazon Personalize batch segment job"""
+    if USE_PERSONALIZE
+    else ""
+)
 
-When a user asks a question about data, follow this process:
-1. Based on the table structure provided in your system prompt and the user's question, formulate an appropriate SQL query
-2. Execute the query using execute_sql_query
-3. Present the results in a clear, readable format
-4. Explain what the results mean in the context of the user's question
-
+AGENT_INSTRUCTION_ADDITIONAL_WORKFLOW = (
+    """
 When a user asks to create an item-based segment:
 1. First, check if the specified item_ids already exist in the item_based_segment table.
    Execute a SQL query like this:
@@ -76,7 +72,32 @@ When a user asks to create an item-based segment:
    - Use the check_personalize_segment_status tool to check and inform them.
    - Once the Personalize batch segment job is complete (status is "COMPLETED"), the segment data will be available in the item_based_segment table.
 
+"""
+    if USE_PERSONALIZE
+    else ""
+)
 
+# Agent instruction template
+AGENT_INSTRUCTION = f"""
+You are an advanced SQL Assistant that helps users query data using Amazon Athena.
+
+Your primary role is to:
+1. Understand natural language requests about data
+2. Convert these requests into proper SQL queries for Athena
+3. Execute these queries and present the results in a clear, readable format
+4. Explain the results when appropriate{AGENT_INSTRUCTION_ADDITIONAL_ROLE}
+
+You have access to the following tools:
+- execute_sql_query: Executes a SQL query on Athena and returns the results
+- create_downloadable_url: Creates a downloadable URL for query results{AGENT_INSTRUCTION_ADDITIONAL_TOOLS}
+
+When a user asks a question about data, follow this process:
+1. Based on the table structure provided in your system prompt and the user's question, formulate an appropriate SQL query
+2. Execute the query using execute_sql_query
+3. Present the results in a clear, readable format
+4. Explain what the results mean in the context of the user's question
+
+{AGENT_INSTRUCTION_ADDITIONAL_WORKFLOW}
 IMPORTANT ATHENA SQL TIP:
 -  use the from_unixtime() function for unixtime.
   example: from_unixtime(1605793223) or from_unixtime(unix_timestamp_column)
@@ -596,10 +617,15 @@ def handler(event, context):
         # Enhance the system prompt with table information
         enhanced_system_prompt = f"{AGENT_INSTRUCTION}\n\nAVAILABLE DATABASE INFORMATION:\n{table_information}"
 
-        # Create the agent with all the tools and conversation history
+        # Build tools list based on available services
+        tools = [execute_sql_query, create_downloadable_url]
+        if USE_PERSONALIZE:
+            tools.extend([create_personalize_item_based_segment, check_personalize_segment_status])
+
+        # Create the agent with conditional tools and conversation history
         agent = Agent(
             model=bedrock_model,
-            tools=[execute_sql_query, create_downloadable_url, create_personalize_item_based_segment, check_personalize_segment_status],
+            tools=tools,
             system_prompt=enhanced_system_prompt,
             messages=agent_messages,
         )

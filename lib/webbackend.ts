@@ -18,8 +18,8 @@ import { PublicRestApi } from './public-rest-api';
 interface WebBackendProps {
   allowOrigin: string;
   dataStorage: DataStorage;
-  personalizeSegmentWorkflow: PersonalizeSegmentWorkflow;
-  personalizeStore: PersonalizeStore;
+  personalizeSegmentWorkflow?: PersonalizeSegmentWorkflow;
+  personalizeStore?: PersonalizeStore;
 }
 
 export class WebBackend extends Construct {
@@ -44,23 +44,27 @@ export class WebBackend extends Construct {
     });
 
     // Agent processor Lambda function (for async processing)
+    const envs: any = {
+      SESSION_TABLE: this.sessionTable.tableName,
+      DDB_SESSION_TABLE: this.sessionTable.tableName,
+      ATHENA_DATABASE: props.dataStorage.glueDatabase.databaseName,
+      ATHENA_OUTPUT_LOCATION: `s3://${props.dataStorage.athenaResultBucket.bucketName}/athena-results/`,
+      ATHENA_WORKGROUP: 'primary'
+    };
+    if (props.personalizeSegmentWorkflow && props.personalizeStore) {
+      envs['SEGMENT_STATE_MACHINE_ARN'] = props.personalizeSegmentWorkflow.stateMachine.stateMachineArn;
+      envs['SOLUTION_VERSION_TABLE'] = props.personalizeStore.personalizeTable.tableName;
+    }
     this.agentProcessor = new PythonFunction(this, 'AgentProcessor', {
       entry: 'lambda/webbackend',
       runtime: lambda.Runtime.PYTHON_3_13,
       index: 'agent_processor.py',
       handler: 'handler',
       timeout: cdk.Duration.minutes(15),
-      environment: {
-        SESSION_TABLE: this.sessionTable.tableName,
-        DDB_SESSION_TABLE: this.sessionTable.tableName,
-        ATHENA_DATABASE: props.dataStorage.glueDatabase.databaseName,
-        ATHENA_OUTPUT_LOCATION: `s3://${props.dataStorage.athenaResultBucket.bucketName}/athena-results/`,
-        ATHENA_WORKGROUP: 'primary',
-        SEGMENT_STATE_MACHINE_ARN: props.personalizeSegmentWorkflow.stateMachine.stateMachineArn,
-        SOLUTION_VERSION_TABLE: props.personalizeStore.personalizeTable.tableName
-      },
+      environment: envs,
       memorySize: 512
     });
+
     // WebSocket handler Lambda function
     this.websocketHandler = new PythonFunction(this, 'WebSocketHandler', {
       entry: 'lambda/webbackend',
@@ -102,13 +106,14 @@ export class WebBackend extends Construct {
 
     this.agentProcessor.addToRolePolicy(athenaPolicy);
 
-    // Grant Step Functions permissions to the Lambda function
-    // Grant permission to start execution of the segment state machine
-    props.personalizeSegmentWorkflow.stateMachine.grantStartExecution(this.agentProcessor);
+    if (props.personalizeSegmentWorkflow && props.personalizeStore) {
+      // Grant Step Functions permissions to the Lambda function
+      // Grant permission to start execution of the segment state machine
+      props.personalizeSegmentWorkflow.stateMachine.grantStartExecution(this.agentProcessor);
 
-    // Grant DynamoDB permissions to the Lambda function
-    props.personalizeStore.personalizeTable.grantReadData(this.agentProcessor);
-
+      // Grant DynamoDB permissions to the Lambda function
+      props.personalizeStore.personalizeTable.grantReadData(this.agentProcessor);
+    }
     // Grant Lambda invoke permissions
     this.agentProcessor.grantInvoke(this.websocketHandler);
 
