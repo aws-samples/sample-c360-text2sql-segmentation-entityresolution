@@ -55,8 +55,10 @@ def save_conversation_history(user_id: str, session_id: str, messages: list) -> 
         True if successful, False otherwise
     """
     try:
-        session_table.put_item(
-            Item={"user_id": user_id, "session_id": session_id, "messages": messages, "last_updated": int(datetime.now().timestamp())}
+        session_table.update_item(
+            Key={"user_id": user_id, "session_id": session_id},
+            UpdateExpression="SET messages = :messages, last_updated = :updated",
+            ExpressionAttributeValues={":messages": messages, ":updated": int(datetime.now().timestamp())},
         )
         return True
 
@@ -65,62 +67,30 @@ def save_conversation_history(user_id: str, session_id: str, messages: list) -> 
         return False
 
 
-def update_session_connection(user_id: str, session_id: str, connection_id: str, status: str = "connected") -> bool:
+def set_session_connection(user_id: str, session_id: str, connection_id: str) -> bool:
     """
-    セッションの接続情報を更新する
+    セッションにWebSocket接続IDを設定する
 
     Args:
         user_id: ユーザーID
         session_id: セッションID
-        connection_id: 接続ID
-        status: 接続ステータス ("connected" または "disconnected")
+        connection_id: WebSocket接続ID
 
     Returns:
-        更新が成功したかどうか
+        設定が成功したかどうか
     """
     try:
         current_time = int(datetime.now().timestamp())
-        update_expr = "SET connection_id = :conn_id, connection_status = :status, last_updated = :updated"
-        expr_attr_values = {":conn_id": connection_id, ":status": status, ":updated": current_time}
-
-        if status == "connected":
-            update_expr += ", last_connected = :time"
-            expr_attr_values[":time"] = current_time
-        else:
-            update_expr += ", last_disconnected = :time"
-            expr_attr_values[":time"] = current_time
 
         session_table.update_item(
             Key={"user_id": user_id, "session_id": session_id},
-            UpdateExpression=update_expr,
-            ExpressionAttributeValues=expr_attr_values,
+            UpdateExpression="SET connection_id = :conn_id, last_updated = :updated",
+            ExpressionAttributeValues={":conn_id": connection_id, ":updated": current_time},
         )
         return True
     except Exception as e:
-        logger.error(f"Error updating session connection: {str(e)}")
+        logger.error(f"Error setting session connection: {str(e)}")
         return False
-
-
-def find_sessions_by_connection_id(connection_id: str) -> list:
-    """
-    指定された接続IDに関連付けられたセッションを検索する
-
-    Args:
-        connection_id: 接続ID
-
-    Returns:
-        セッションのリスト
-    """
-    try:
-        response = session_table.scan(FilterExpression=Attr("connection_id").eq(connection_id))
-
-        if "Items" in response and response["Items"]:
-            return response["Items"]
-        else:
-            return []
-    except Exception as e:
-        logger.error(f"Error finding sessions by connection_id: {str(e)}")
-        return []
 
 
 def get_active_connection_id(user_id: str, session_id: str) -> str:
