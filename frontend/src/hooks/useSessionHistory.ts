@@ -18,7 +18,7 @@ export interface SessionDetail {
 const useSessionHistory = () => {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const { get } = useHttp();
+  const { get, delete: del } = useHttp();
   const { loading } = useStore();
 
   // セッション一覧を取得する関数
@@ -48,6 +48,20 @@ const useSessionHistory = () => {
     }
   };
 
+  // セッションを削除する関数
+  const deleteSession = async (sessionId: string): Promise<boolean> => {
+    setError(null);
+    try {
+      await del(`/sessions/${sessionId}`);
+      console.log(`セッション ${sessionId} を削除しました`);
+      return true;
+    } catch (err) {
+      console.error(`セッション ${sessionId} の削除に失敗しました:`, err);
+      setError(`セッション ${sessionId} の削除に失敗しました`);
+      return false;
+    }
+  };
+
   // コンポーネントのマウント時にセッション一覧を取得
   useEffect(() => {
     fetchSessions();
@@ -58,7 +72,8 @@ const useSessionHistory = () => {
     loading,
     error,
     fetchSessions,
-    fetchSessionDetail
+    fetchSessionDetail,
+    deleteSession
   };
 };
 

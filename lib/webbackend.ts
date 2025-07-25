@@ -130,8 +130,8 @@ export class WebBackend extends Construct {
       }
     });
 
-    // セッションテーブルへの読み取り権限を付与
-    this.sessionTable.grantReadData(this.restApiHandler);
+    // セッションテーブルへの読み書き権限を付与
+    this.sessionTable.grantReadWriteData(this.restApiHandler);
 
     // Create Cognito resources
     this.cognito = new Cognito(this, 'Cognito');
@@ -214,6 +214,7 @@ export class WebBackend extends Construct {
     // セッション履歴APIエンドポイントの追加
     this.restApi.addResource('GET', ['sessions'], this.restApiHandler, authorizer);
     this.restApi.addResource('GET', ['sessions', '{session_id}'], this.restApiHandler, authorizer);
+    this.restApi.addResource('DELETE', ['sessions', '{session_id}'], this.restApiHandler, authorizer);
 
     new cdk.CfnOutput(this, 'RestApiUrl', {
       value: this.restApi.url
