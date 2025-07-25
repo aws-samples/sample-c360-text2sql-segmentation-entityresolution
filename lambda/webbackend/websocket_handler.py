@@ -6,8 +6,7 @@ from datetime import datetime
 from sessionutils import (
     get_conversation_history,
     filter_messages_for_response,
-    update_session_connection,
-    find_sessions_by_connection_id,
+    set_session_connection,
 )
 
 logger = logging.getLogger()
@@ -75,10 +74,10 @@ def handle_connect(event, connection_id):
 
         logger.info(f"WebSocket connected: connection_id={connection_id}, user_id={user_id}, session_id={session_id}")
 
-        # session_idが提供された場合、セッション接続情報を更新
+        # session_idが提供された場合、セッション接続情報を設定
         if session_id:
-            update_session_connection(user_id, session_id, connection_id, "connected")
-            logger.info(f"Updated session mapping: session_id={session_id}, connection_id={connection_id}")
+            set_session_connection(user_id, session_id, connection_id)
+            logger.info(f"Set session connection: session_id={session_id}, connection_id={connection_id}")
 
         return {"statusCode": 200, "body": "Connected"}
     except Exception as e:
@@ -89,22 +88,9 @@ def handle_connect(event, connection_id):
 def handle_disconnect(connection_id):
     """
     Handle WebSocket disconnect event.
-    切断時にConversationSessionTableのconnection_statusを更新する。
     """
     try:
         logger.info(f"WebSocket disconnected: connection_id={connection_id}")
-
-        # このconnection_idを持つセッションを検索
-        sessions = find_sessions_by_connection_id(connection_id)
-
-        # 見つかったセッションのconnection_statusを更新
-        for session in sessions:
-            user_id = session.get("user_id")
-            session_id = session.get("session_id")
-
-            if user_id and session_id:
-                update_session_connection(user_id, session_id, connection_id, "disconnected")
-                logger.info(f"Updated session status to disconnected: user_id={user_id}, session_id={session_id}")
 
         return {"statusCode": 200, "body": "Disconnected"}
     except Exception as e:
