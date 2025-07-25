@@ -12,7 +12,14 @@ interface MainProps {
 
 function Main({ signOut, user }: MainProps) {
   const [currentSessionId, setCurrentSessionId] = useState<string | undefined>(undefined);
-  const { sessions, loading: sessionsLoading, error, fetchSessions, fetchSessionDetail } = useSessionHistory();
+  const {
+    sessions,
+    loading: sessionsLoading,
+    error,
+    fetchSessions,
+    fetchSessionDetail,
+    deleteSession
+  } = useSessionHistory();
   const [currentSessionMessages, setCurrentSessionMessages] = useState<any[]>([]);
 
   // セッションIDが変更されたら、そのセッションの詳細情報を取得
@@ -36,6 +43,18 @@ function Main({ signOut, user }: MainProps) {
   const onNewSessionCreated = (sessionId: string) => {
     fetchSessions();
     setCurrentSessionId(sessionId);
+  };
+
+  const onSessionDelete = async (sessionId: string) => {
+    const success = await deleteSession(sessionId);
+    if (success) {
+      // 削除されたセッションが現在のセッションの場合、currentSessionIdを空にする
+      if (currentSessionId === sessionId) {
+        setCurrentSessionId('');
+      }
+      // セッション一覧をリロード
+      fetchSessions();
+    }
   };
 
   // Get userId from Amplify user object, or use a fallback
@@ -73,6 +92,7 @@ function Main({ signOut, user }: MainProps) {
           error={error}
           onRefresh={fetchSessions}
           onSessionSelect={setCurrentSessionId}
+          onSessionDelete={onSessionDelete}
           onNewSession={() => {
             // 新しいチャットボタンがクリックされたときに、currentSessionIdをundefinedに設定
             setCurrentSessionId(undefined);

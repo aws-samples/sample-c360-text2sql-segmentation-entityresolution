@@ -8,9 +8,11 @@ import {
   Typography,
   Divider,
   CircularProgress,
-  Button
+  Button,
+  IconButton
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete';
 import type { SessionInfo } from '../hooks/useSessionHistory';
 
 interface SessionSidebarProps {
@@ -20,6 +22,7 @@ interface SessionSidebarProps {
   error: string | null;
   onRefresh: () => void;
   onSessionSelect: (sessionId: string) => void;
+  onSessionDelete: (sessionId: string) => Promise<void>;
   onNewSession: () => void;
 }
 
@@ -30,6 +33,7 @@ const SessionSidebar: React.FC<SessionSidebarProps> = ({
   error,
   onRefresh,
   onSessionSelect,
+  onSessionDelete,
   onNewSession
 }) => {
   const handleRefresh = () => {
@@ -42,6 +46,11 @@ const SessionSidebar: React.FC<SessionSidebarProps> = ({
 
   const handleNewSession = () => {
     onNewSession();
+  };
+
+  const handleDeleteSession = async (sessionId: string, event: React.MouseEvent) => {
+    event.stopPropagation(); // セッション選択を防ぐ
+    await onSessionDelete(sessionId);
   };
 
   const sidebarContent = (
@@ -87,6 +96,16 @@ const SessionSidebar: React.FC<SessionSidebarProps> = ({
                 sx={{
                   '&.Mui-selected': {
                     backgroundColor: 'rgba(25, 118, 210, 0.08)'
+                  },
+                  display: 'flex',
+                  alignItems: 'center',
+                  pr: 1,
+                  '& .delete-icon': {
+                    opacity: 0,
+                    transition: 'opacity 0.2s'
+                  },
+                  '&:hover .delete-icon': {
+                    opacity: 1
                   }
                 }}
               >
@@ -96,7 +115,22 @@ const SessionSidebar: React.FC<SessionSidebarProps> = ({
                     noWrap: true,
                     style: { fontWeight: session.session_id === currentSessionId ? 'bold' : 'normal' }
                   }}
+                  sx={{ flex: 1 }}
                 />
+                <IconButton
+                  className="delete-icon"
+                  size="small"
+                  onClick={(event) => handleDeleteSession(session.session_id, event)}
+                  sx={{
+                    ml: 1,
+                    color: 'text.secondary',
+                    '&:hover': {
+                      color: 'error.main'
+                    }
+                  }}
+                >
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
               </ListItemButton>
             </ListItem>
           ))}

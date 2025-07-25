@@ -108,6 +108,32 @@ def get_session_details(session_id):
         raise InternalServerError("Error retrieving session details")
 
 
+@app.delete("/sessions/<session_id>")
+def delete_session(session_id):
+    """
+    特定のセッションを削除するエンドポイント
+    """
+    try:
+        # リクエストからユーザーIDを取得
+        user_id = app.current_event.request_context.authorizer.get("claims", {}).get("sub")
+
+        if not user_id:
+            return Response(status_code=400, content_type="application/json", body={"error": "User ID not found in token"})
+
+        # セッションを削除
+        session_table.delete_item(Key={"user_id": user_id, "session_id": session_id})
+
+        logger.info(f"Session {session_id} deleted successfully for user {user_id}")
+
+        return Response(
+            status_code=200, content_type="application/json", body={"message": "Session deleted successfully", "session_id": session_id}
+        )
+
+    except Exception as e:
+        logger.exception(f"Error deleting session {session_id}")
+        raise InternalServerError("Error deleting session")
+
+
 @logger.inject_lambda_context(correlation_id_path=correlation_paths.API_GATEWAY_REST)
 def handler(event, context: LambdaContext):
     """
