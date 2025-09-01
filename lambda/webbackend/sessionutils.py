@@ -2,6 +2,7 @@ import boto3
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from boto3.dynamodb.conditions import Attr
 
@@ -116,6 +117,34 @@ def get_active_connection_id(user_id: str, session_id: str) -> str:
         return None
 
 
+def remove_thinking_tags(text: str) -> str:
+    """
+    Remove <thinking> tags and their content from text for client display.
+    This preserves the model's thinking process internally while cleaning the user-facing output.
+
+    Args:
+        text: The text that may contain <thinking> tags
+
+    Returns:
+        The text with <thinking> tags and their content removed
+    """
+    if not text:
+        return text
+
+    # Remove <thinking>...</thinking> blocks (including multiline)
+    pattern = r"<thinking>.*?</thinking>"
+    cleaned_text = re.sub(pattern, "", text, flags=re.DOTALL)
+
+    # Remove any remaining standalone <thinking> or </thinking> tags
+    cleaned_text = re.sub(r"</?thinking>", "", cleaned_text)
+
+    # Clean up extra whitespace that might be left behind
+    cleaned_text = re.sub(r"\n\s*\n\s*\n", "\n\n", cleaned_text)  # Replace multiple newlines with double newlines
+    cleaned_text = cleaned_text.strip()
+
+    return cleaned_text
+
+
 def filter_messages_for_response(messages):
     """
     Filter and process messages for client response, maintaining original message order.
@@ -124,6 +153,7 @@ def filter_messages_for_response(messages):
     - Keeps regular conversation messages
     - Converts downloadable URL tool results to special URL messages
     - Filters out other tool use and tool result messages
+    - Removes <thinking> tags from message content for clean client display
 
     Args:
         messages: List of message dictionaries from the conversation
@@ -148,7 +178,21 @@ def filter_messages_for_response(messages):
 
         # Check if this is a regular message (no tool use/result)
         if all("toolUse" not in item and "toolResult" not in item for item in contents):
-            filtered_messages.append(message)
+            # Clean the message content by removing <thinking> tags
+            cleaned_message = {"role": message["role"], "content": []}
+
+            for content_item in contents:
+                if "text" in content_item:
+                    cleaned_text = remove_thinking_tags(content_item["text"])
+                    if cleaned_text:  # Only add if there's content after cleaning
+                        cleaned_message["content"].append({"text": cleaned_text})
+                else:
+                    # Keep non-text content as is (images, etc.)
+                    cleaned_message["content"].append(content_item)
+
+            # Only add the message if it has content after cleaning
+            if cleaned_message["content"]:
+                filtered_messages.append(cleaned_message)
             continue
 
         # Check for downloadable URL tool result
