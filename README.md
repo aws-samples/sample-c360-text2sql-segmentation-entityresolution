@@ -101,3 +101,47 @@ Amazon Cognito User Pool でユーザを作成します。
 
 以上で準備が完了です。
 デプロイ時にメモした `AmtC360MarketingStack.WebAppUrl`のURLにブラウザからアクセスしてください
+
+
+## 自社データに合わせたシステムカスタマイズ
+
+自社で保有するCSVデータのスキーマに合わせてシステムをカスタマイズしたい場合は、`csvtool/`ディレクトリのツールを使用してください。
+
+
+
+### セットアップ
+
+1. csvtoolディレクトリに移動
+```bash
+cd csvtool
+```
+
+2. 依存関係をインストール
+```bash
+pip install -r requirements.txt
+```
+
+3. 設定ファイルを編集
+`csv_to_glue_catalog.py`の冒頭で以下の変数を設定：
+```python
+S3_BUCKET_NAME = "<デプロイ時にメモしたDataBucketOutput>"
+GLUE_DATABASE_NAME = "<実際のGlueデータベース名>"
+```
+
+4. CSVファイルを配置
+`./csvfiles`ディレクトリを作成し、ヘッダー付きのCSVファイルを配置
+
+### 実行
+
+```bash
+python csv_to_glue_catalog.py
+```
+
+### 動作内容
+- 既存のGlue Catalogテーブルを削除
+- CSVファイルをヘッダーでグループ化
+- Amazon Bedrockでスキーマを自動分析・推測
+- AWS Glue Catalogにテーブルを作成
+- S3にCSVファイルをアップロード
+
+このツールにより、自社のCSVデータを簡単にCustomer 360システムに統合できます。
