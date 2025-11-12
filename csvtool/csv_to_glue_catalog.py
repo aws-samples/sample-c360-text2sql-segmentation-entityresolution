@@ -9,10 +9,12 @@ import hashlib
 import time
 
 # Global variables
-S3_BUCKET_NAME = "<ここを実際のs3バケット名に置き換えてください>"
-GLUE_DATABASE_NAME = "<ここを実際のGlueデータベース名に置き換えてください>"
+S3_BUCKET_NAME = "amtc360marketingstack-datastoragedatabucketeed15eb-4vnkafpjvwfj"
+GLUE_DATABASE_NAME = "amtc360marketingstackdatastoragegluedb6e0cfd2e"
 
-BEDROCK_MODEL_ID = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+# BEDROCK_MODEL_ID = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+BEDROCK_MODEL_ID = "global.anthropic.claude-sonnet-4-5-20250929-v1:0" 
+
 CSV_DIRECTORY = "./csvfiles"
 
 # AWS clients
