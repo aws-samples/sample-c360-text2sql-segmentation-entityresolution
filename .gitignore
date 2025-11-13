@@ -13,5 +13,6 @@ AmazonQ.md
 
 *.csv
 
+csvtool/csvfiles/
 
 **/.env
