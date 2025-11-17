@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import uuid
+from datetime import datetime
 from typing import Dict, Any, List
 from sessionutils import get_conversation_history, save_conversation_history, filter_messages_for_response, get_active_connection_id
 
@@ -614,8 +615,13 @@ def handler(event, context):
         # Get all table information before initializing the agent
         table_information = get_all_table_information()
 
-        # Enhance the system prompt with table information
-        enhanced_system_prompt = f"{AGENT_INSTRUCTION}\n\nAVAILABLE DATABASE INFORMATION:\n{table_information}"
+        # Get current date information
+        current_date = datetime.now().strftime("%Y-%m-%d")
+
+        # Enhance the system prompt with table information and current date
+        enhanced_system_prompt = (
+            f"{AGENT_INSTRUCTION}\n\nCURRENT DATE:\nToday's date: {current_date}\n\nAVAILABLE DATABASE INFORMATION:\n{table_information}"
+        )
 
         # Build tools list based on available services
         tools = [execute_sql_query, create_downloadable_url]
