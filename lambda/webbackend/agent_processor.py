@@ -26,11 +26,12 @@ ATHENA_OUTPUT_LOCATION = os.environ["ATHENA_OUTPUT_LOCATION"]
 ATHENA_WORKGROUP = os.environ["ATHENA_WORKGROUP"]
 SEGMENT_STATE_MACHINE_ARN = os.environ.get("SEGMENT_STATE_MACHINE_ARN")
 SOLUTION_VERSION_TABLE = os.environ.get("SOLUTION_VERSION_TABLE")
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-3-7-sonnet-20250219-v1:0")
 USE_PERSONALIZE = SEGMENT_STATE_MACHINE_ARN and SOLUTION_VERSION_TABLE
 
 # Bedrock model setup
 bedrock_model = BedrockModel(
-    model_id="us.anthropic.claude-3-7-sonnet-20250219-v1:0", temperature=0.0, boto_session=boto3.Session(region_name="us-west-2")
+    model_id=BEDROCK_MODEL_ID, temperature=0.0, boto_session=boto3.Session(region_name="us-west-2")
 )
 
 # SQL result threshold
