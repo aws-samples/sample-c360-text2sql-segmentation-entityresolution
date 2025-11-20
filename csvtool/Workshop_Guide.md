@@ -30,7 +30,7 @@ NotificationEmailAddress　に　受信可能なメールアドレスを設定�
 
 ![](./media/ITI5a809eda80a841ca8138220cb.png)
 
-#### １−５、デプロイ完了まで待つ　（おおよそ３０分）
+#### １−５、デプロイ完了まで待つ（おおよそ30分）
 
 b.  デプロイ開始直後に AWS Notification - Subscription Confirmation
     というタイトルのメールが送られてくるから \"Confirm subscription\"
@@ -57,7 +57,7 @@ One-Click Deploy で東京を選んだ場合:
 
 ![](./media/ITIda078f8dab724d57bdceeb953.png)
 
-*ここで全員のデプロイが終わるまでまつ*
+*ここで全員のデプロイが終わるまで待つ*
 
 ### ２、デプロイ後の確認
 
@@ -119,13 +119,13 @@ python dbloader/upload_to_s3.py
 
 ##### ３−４−４、S3、Glue、Athenaで確認する
 
-- S3バゲットでアップロードされたCSVファイルを確認する
+- S3バケットでアップロードされたCSVファイルを確認する
 
 ![](./media/ITI50fa78f7ec6342ec9824ab190.png)
 
 - Glue Catalogで登録情報を確認する
 
-![](./media/ITIac74b166b60d4eacbba05676f.png)
+![](./media/ITI85f95a5103a7457lmvgjwe9893.png)
 
 **Table overview**
 
@@ -187,7 +187,7 @@ Passwordを変更する
 
 顧客のリストをCSVで出力して
 
-メインブランドの売上 TOP 3をおしえて
+メインブランドの売上 TOP 3を教えて
 
 使ったSQLを出してもらい、Athenaで実行してみる
 
@@ -211,13 +211,12 @@ MACのファイル設定例（複数ファイルの場合、手順３を繰り�
 
 CSVデータをCSVToolのディレクトリに移動する
 
-複数のCSVをアップロードする際に、Too Many
-Requestsエラーになることはあります。その際にリトライしてください。
+複数のCSVをアップロードする際に、Too Many Requestsエラーになることがあります。その際にリトライしてください。
 
 mv \~/\*.csv
 /home/cloudshell-user/sample-c360-text2sql-segmentation-entityresolution/csvtool/csvfiles/
 
-CSVデータは所定の場所に移動したかを確認する。
+CSVデータが所定の場所に移動したかどうかを確認する。
 
 ls -la
 /home/cloudshell-user/sample-c360-text2sql-segmentation-entityresolution/csvtool/csvfiles/
