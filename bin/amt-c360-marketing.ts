@@ -14,7 +14,7 @@ if (personalizeEnabled && !entityResolutionEnabled) {
   );
 }
 
-const wafStack = new WafStack(app, 'WafStack', {
+const wafStack = new WafStack(app, 'AmtC360WafStack', {
   env: {
     region: 'us-east-1'
   },
