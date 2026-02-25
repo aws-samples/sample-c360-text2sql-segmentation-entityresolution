@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@aws-amplify/ui-react": "^6.11.2",
+    "@aws-amplify/ui-react": "^6.15.0",
     "@aws-sdk/client-cognito-identity": "^3.980.0",
     "@aws-sdk/client-lambda": "^3.995.0",
     "@aws-sdk/credential-provider-cognito-identity": "^3.972.3",
