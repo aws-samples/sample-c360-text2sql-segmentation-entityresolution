@@ -1,0 +1,16 @@
+{
+  "name": "c360-deploy-agent",
+  "version": "2.0.0",
+  "displayName": "C360 Deploy Agent",
+  "description": "AMT Customer 360ソリューションのデプロイ手順ガイド",
+  "keywords": ["c360", "deploy", "deployment", "cdk", "aws", "customer360", "デプロイ"],
+  "mcpServers": {
+    "awsknowledge": {
+      "command": "uvx",
+      "args": ["awslabs.aws-documentation-mcp-server@latest"],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      }
+    }
+  }
+}

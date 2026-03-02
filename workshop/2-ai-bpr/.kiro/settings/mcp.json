@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "markitdown": {
+      "command": "uvx",
+      "args": [
+        "markitdown-mcp"
+      ],
+      "env": {},
+      "disabled": false,
+      "autoApprove": [
+        "convert_to_markdown"
+      ]
+    },
+    "awslabs.syntheticdata-mcp-server": {
+      "command": "uvx",
+      "args": [
+        "awslabs.syntheticdata-mcp-server"
+      ],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR",
+        "AWS_PROFILE": "default",
+        "AWS_REGION": "us-east-1"
+      },
+      "autoApprove": [],
+      "disabled": false
+    }
+  }
+}

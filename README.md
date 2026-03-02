@@ -103,6 +103,25 @@ Amazon Cognito User Pool でユーザを作成します。
 デプロイ時にメモした `AmtC360MarketingStack.WebAppUrl`のURLにブラウザからアクセスしてください
 
 
+## Workshop
+
+`workshop/` ディレクトリには、本ソリューションのデプロイからカスタマイズまでを段階的に進めるためのワークショップ資材が含まれています。各ディレクトリは Kiro Power として提供されており、Kiro に指示することで対話的に進められます。
+
+| ディレクトリ | 内容 | 概要 |
+|-------------|------|------|
+| `1-deploy` | デプロイ | CDK デプロイ、Cognito ユーザー作成、テストデータ生成・アップロードを自動化 |
+| `2-ai-bpr` | AI BPR ワークショップ | AI Driven Business Process Re-engineering。業務プロセスの分析から AI エージェントのプロトタイプ実装までを実施 |
+| `3-customize` | カスタマイズ | AI BPR の成果物をもとに、CSV データの Glue Catalog 登録やエージェント設定の更新を実行 |
+
+### 進め方
+
+1. `1-deploy` — Kiro で「C360 をデプロイして」と指示し、環境を構築
+2. `2-ai-bpr` — ワークショップ本編。`prompts/` 配下のプロンプトを順に Kiro に渡して進行
+3. `3-customize` — Kiro で「C360 をカスタマイズして」と指示し、AI BPR の成果を環境に反映
+
+各 Power の詳細は、それぞれのディレクトリ内の `POWER.md` / `README.md` を参照してください。
+
+
 ## 自社データに合わせたシステムカスタマイズ
 
 自社で保有するCSVデータのスキーマに合わせてシステムをカスタマイズしたい場合は、`csvtool/`ディレクトリのツールを使用してください。
@@ -129,7 +148,7 @@ GLUE_DATABASE_NAME = "<実際のGlueデータベース名>"
 ```
 
 4. CSVファイルを配置
-`./csvfiles`ディレクトリを作成し、ヘッダー付きのCSVファイルを配置
+`./workshop/2-ai-bpr/data`ディレクトリを作成し、ヘッダー付きのCSVファイルを配置
 
 ### 実行
 
@@ -145,3 +164,20 @@ python csv_to_glue_catalog.py
 - S3にCSVファイルをアップロード
 
 このツールにより、自社のCSVデータを簡単にCustomer 360システムに統合できます。
+
+
+## Workshop
+
+`workshop/` ディレクトリには、Kiro Power を活用したワークショップ用のリソースが含まれています。各ステップは順番に実行してください。
+
+| ディレクトリ | 内容 | 概要 |
+|-------------|------|------|
+| `1-deploy` | デプロイ | CDK デプロイ、Cognito ユーザー作成、テストデータ生成・アップロードを自動化する Power |
+| `2-ai-bpr` | AI BPR ワークショップ | AI Driven Business Process Re-engineering。業務プロセスへの AI エージェント組込みを検討するワークショップ |
+| `3-customize` | カスタマイズ | AI BPR の成果物をもとに、CSV の Glue Catalog 登録やエージェント指示・UI タイトルの更新を行う Power |
+
+### 使い方
+
+1. Kiro で本リポジトリを開く
+2. 各 `workshop/` サブディレクトリの Power をインストールする
+3. `1-deploy` → `2-ai-bpr` → `3-customize` の順にチャットから指示して実行する

@@ -1,0 +1,16 @@
+{
+  "name": "c360-customize-agent",
+  "version": "1.0.0",
+  "displayName": "C360 Customize Agent",
+  "description": "CSVファイルを分析してGlue CatalogにIcebergテーブルとして登録するエージェント",
+  "keywords": ["c360", "csv", "glue", "iceberg", "athena", "catalog", "schema", "カスタマイズ", "customize"],
+  "mcpServers": {
+    "awsknowledge": {
+      "command": "uvx",
+      "args": ["awslabs.aws-documentation-mcp-server@latest"],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      }
+    }
+  }
+}
