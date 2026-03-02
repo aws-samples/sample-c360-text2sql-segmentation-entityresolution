@@ -12,10 +12,9 @@ import time
 S3_BUCKET_NAME = "<ここを実際のs3バケット名に置き換えてください>"
 GLUE_DATABASE_NAME = "<ここを実際のGlueデータベース名に置き換えてください>"
 
-# BEDROCK_MODEL_ID = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
-BEDROCK_MODEL_ID = "global.anthropic.claude-sonnet-4-5-20250929-v1:0" 
+BEDROCK_MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
-CSV_DIRECTORY = "./csvfiles"
+CSV_DIRECTORY = "./workshop/2-ai-bpr/data"
 
 # AWS clients
 from botocore.config import Config
