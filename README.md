@@ -148,7 +148,7 @@ GLUE_DATABASE_NAME = "<実際のGlueデータベース名>"
 ```
 
 4. CSVファイルを配置
-`./csvfiles`ディレクトリを作成し、ヘッダー付きのCSVファイルを配置
+`./workshop/2-ai-bpr/data`ディレクトリを作成し、ヘッダー付きのCSVファイルを配置
 
 ### 実行
 
