@@ -27,6 +27,21 @@ inclusion: manual
 
 ### 3. cdk deploy で再デプロイ
 
+デプロイ前に Docker が利用可能か確認してください：
+
+```bash
+docker info > /dev/null 2>&1 && echo "OK" || echo "NG"
+```
+
+`NG` の場合、以下を実行してからターミナルを再起動してください：
+
+```bash
+sudo usermod -aG docker $USER
+sudo systemctl restart docker
+```
+
+Docker が利用可能であることを確認してからデプロイを実行してください：
+
 ```bash
 npx cdk deploy --require-approval never
 ```
