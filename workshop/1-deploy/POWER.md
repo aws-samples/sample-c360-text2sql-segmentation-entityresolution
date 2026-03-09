@@ -12,7 +12,7 @@ AMT Customer 360 ソリューションのデプロイ手順を提供する Power
 
 ## 機能
 
-- デプロイ前に StackName の prefix をヒアリング（例：dev、TeamA）し、スタック名に付与（例：`dev_AmtC360MarketingStack`、`dev_AmtC360WafStack`）
+- デプロイ前に StackName の prefix をヒアリング（例：dev、TeamA）し、`bin/amt-c360-marketing.ts` のスタック名を書き換えてデプロイ（例：`dev_AmtC360MarketingStack`、`dev_AmtC360WafStack`）
 - CDK デプロイの自動化
 - Cognito ユーザー作成
 - テストデータ生成・アップロード
