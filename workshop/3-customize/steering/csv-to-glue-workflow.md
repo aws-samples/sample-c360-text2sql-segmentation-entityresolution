@@ -32,14 +32,35 @@ aws cloudformation list-stack-resources \
   --output text
 ```
 
-### 2. csvtool/csv_to_glue_catalog.py の変数を更新
+### 2. Python 依存パッケージの確認
+
+`csvtool/requirements.txt` に記載されたパッケージ（pandas, boto3）がインストール済みか確認する：
+
+```bash
+python3 -c "import pandas; import boto3; print('OK')"
+```
+
+`OK` が表示されない場合、まず pip でのインストールを試みる：
+
+```bash
+pip install -r csvtool/requirements.txt
+```
+
+pip が利用できない場合は、システムパッケージでインストールする：
+
+```bash
+sudo apt update
+sudo apt install -y python3-pandas python3-boto3
+```
+
+### 3. csvtool/csv_to_glue_catalog.py の変数を更新
 
 取得した値で以下の変数を書き換える:
 
 - `S3_BUCKET_NAME` → 取得した S3 バケット名
 - `GLUE_DATABASE_NAME` → 取得した Glue データベース名
 
-### 3. スクリプトを実行
+### 4. スクリプトを実行
 
 ```bash
 cd csvtool && python csv_to_glue_catalog.py
