@@ -14,6 +14,17 @@ AMT Customer 360 ソリューションの完全なデプロイ手順です。
 
 ## デプロイ手順
 
+### 0. StackName Prefix のヒアリング
+
+デプロイを開始する前に、ユーザーに StackName の prefix を確認してください。
+
+> 「デプロイするスタック名に prefix を付けますか？（例：dev、TeamA）。prefix を付けると `dev_AmtC360MarketingStack` のようなスタック名になります。不要な場合は空のままで構いません。」
+
+ユーザーが prefix を指定した場合、以降の CDK コマンドに `-c stackPrefix=<PREFIX>` を付与してください。
+指定がない場合はデフォルトのスタック名（`AmtC360MarketingStack`、`AmtC360WafStack`）が使用されます。
+
+以降の手順では、prefix が指定された場合のスタック名を `<PREFIX>_AmtC360MarketingStack`、`<PREFIX>_AmtC360WafStack` と表記します。
+
 ### 1. Docker 環境のセットアップ（必要な場合）
 
 Docker 権限エラーが発生した場合：
@@ -27,6 +38,7 @@ sudo systemctl restart docker
 
 ### 2. CDK デプロイ
 
+prefix なしの場合：
 ```bash
 cd <project-dir>
 npm ci
@@ -34,14 +46,24 @@ npm run cdk bootstrap  # 初回のみ
 npm run cdk -- deploy --all --require-approval never
 ```
 
+prefix ありの場合（例：dev）：
+```bash
+cd <project-dir>
+npm ci
+npm run cdk bootstrap  # 初回のみ
+npm run cdk -- deploy --all --require-approval never -c stackPrefix=dev
+```
+
 ### 3. スタック出力の取得
 
 ```bash
 aws cloudformation describe-stacks \
-  --stack-name AmtC360MarketingStack \
+  --stack-name <PREFIX>_AmtC360MarketingStack \
   --query "Stacks[0].Outputs" \
   --output table
 ```
+
+prefix を指定していない場合は `AmtC360MarketingStack` を使用してください。
 
 以下の値をメモ：
 - `DataStorageDataBucketOutput` - S3バケット名
@@ -92,9 +114,11 @@ python3 dbloader/upload_to_s3.py
 
 ```bash
 aws cloudformation describe-stack-events \
-  --stack-name AmtC360MarketingStack \
+  --stack-name <PREFIX>_AmtC360MarketingStack \
   --max-items 20
 ```
+
+prefix を指定していない場合は `AmtC360MarketingStack` を使用してください。
 
 ### CloudWatch Logs 確認
 
@@ -132,7 +156,8 @@ aws logs get-log-events \
 {
   "context": {
     "entityResolutionEnabled": false,
-    "personalizeEnabled": false
+    "personalizeEnabled": false,
+    "stackPrefix": "dev"
   }
 }
 ```

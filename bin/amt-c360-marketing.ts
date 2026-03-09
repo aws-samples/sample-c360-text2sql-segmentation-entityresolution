@@ -7,6 +7,7 @@ const app = new cdk.App();
 const allowOrigin = app.node.tryGetContext('corsAllowOrigin');
 const personalizeEnabled = app.node.tryGetContext('personalizeEnabled');
 const entityResolutionEnabled = app.node.tryGetContext('entityResolutionEnabled');
+const stackPrefix = app.node.tryGetContext('stackPrefix') || '';
 
 if (personalizeEnabled && !entityResolutionEnabled) {
   throw new Error(
@@ -14,14 +15,17 @@ if (personalizeEnabled && !entityResolutionEnabled) {
   );
 }
 
-const wafStack = new WafStack(app, 'AmtC360WafStack', {
+const marketingStackName = stackPrefix ? `${stackPrefix}_AmtC360MarketingStack` : 'AmtC360MarketingStack';
+const wafStackName = stackPrefix ? `${stackPrefix}_AmtC360WafStack` : 'AmtC360WafStack';
+
+const wafStack = new WafStack(app, wafStackName, {
   env: {
     region: 'us-east-1'
   },
   crossRegionReferences: true
 });
 
-new AmtC360MarketingStack(app, 'AmtC360MarketingStack', {
+new AmtC360MarketingStack(app, marketingStackName, {
   webAclArn: wafStack.webAclArn,
   allowOrigin: allowOrigin,
   personalizeEnabled: personalizeEnabled,

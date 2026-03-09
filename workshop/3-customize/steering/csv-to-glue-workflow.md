@@ -6,18 +6,20 @@ inclusion: manual
 
 ## 概要
 
-デプロイ済みの AmtC360MarketingStack から S3 バケット名と Glue データベース名を取得し、`csvtool/csv_to_glue_catalog.py` の変数を更新してスクリプトを実行する。
+デプロイ済みのスタックから S3 バケット名と Glue データベース名を取得し、`csvtool/csv_to_glue_catalog.py` の変数を更新してスクリプトを実行する。
+
+※ デプロイ時に stackPrefix を指定した場合、スタック名は `<PREFIX>_AmtC360MarketingStack` となります。ユーザーに確認してください。
 
 ## ワークフロー
 
 ### 1. CloudFormation から情報を取得
 
-以下のコマンドで AmtC360MarketingStack からリソース情報を取得する。
+以下のコマンドでスタックからリソース情報を取得する。スタック名はデプロイ時の prefix に応じて変更すること（例：`dev_AmtC360MarketingStack`）。
 
 S3 バケット名:
 ```bash
 aws cloudformation describe-stacks \
-  --stack-name AmtC360MarketingStack \
+  --stack-name <STACK_NAME> \
   --query "Stacks[0].Outputs[?OutputKey=='DataStorageDataBucketOutput'].OutputValue" \
   --output text
 ```
@@ -25,7 +27,7 @@ aws cloudformation describe-stacks \
 Glue データベース名:
 ```bash
 aws cloudformation list-stack-resources \
-  --stack-name AmtC360MarketingStack \
+  --stack-name <STACK_NAME> \
   --query "StackResourceSummaries[?ResourceType=='AWS::Glue::Database'].PhysicalResourceId" \
   --output text
 ```
@@ -47,5 +49,5 @@ cd csvtool && python csv_to_glue_catalog.py
 
 ## 安全性に関する注意事項
 
-- AmtC360MarketingStack のリソース以外を操作しないこと
+- スタックのリソース以外を操作しないこと
 - ユーザーの CSV ファイルの元データを削除・変更しないこと
