@@ -49,7 +49,8 @@ export class WebBackend extends Construct {
       DDB_SESSION_TABLE: this.sessionTable.tableName,
       ATHENA_DATABASE: props.dataStorage.glueDatabase.databaseName,
       ATHENA_OUTPUT_LOCATION: `s3://${props.dataStorage.athenaResultBucket.bucketName}/athena-results/`,
-      ATHENA_WORKGROUP: 'primary'
+      ATHENA_WORKGROUP: 'primary',
+      CODE_INTERPRETER_REGION: 'us-west-2'
     };
     if (props.personalizeSegmentWorkflow && props.personalizeStore) {
       envs['SEGMENT_STATE_MACHINE_ARN'] = props.personalizeSegmentWorkflow.stateMachine.stateMachineArn;
@@ -105,6 +106,24 @@ export class WebBackend extends Construct {
     });
 
     this.agentProcessor.addToRolePolicy(athenaPolicy);
+
+    // Grant AgentCore CodeInterpreter permissions
+    const codeInterpreterPolicy = new iam.PolicyStatement({
+      actions: [
+        'bedrock-agentcore:CreateCodeInterpreter',
+        'bedrock-agentcore:StartCodeInterpreterSession',
+        'bedrock-agentcore:InvokeCodeInterpreter',
+        'bedrock-agentcore:StopCodeInterpreterSession',
+        'bedrock-agentcore:DeleteCodeInterpreter',
+        'bedrock-agentcore:ListCodeInterpreters',
+        'bedrock-agentcore:GetCodeInterpreter',
+        'bedrock-agentcore:GetCodeInterpreterSession',
+        'bedrock-agentcore:ListCodeInterpreterSessions'
+      ],
+      resources: ['*']
+    });
+
+    this.agentProcessor.addToRolePolicy(codeInterpreterPolicy);
 
     if (props.personalizeSegmentWorkflow && props.personalizeStore) {
       // Grant Step Functions permissions to the Lambda function

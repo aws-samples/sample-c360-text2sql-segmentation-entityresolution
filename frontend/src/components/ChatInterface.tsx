@@ -94,7 +94,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId, sessionId, initia
                   sx={{
                     p: 2,
                     maxWidth: '80%',
-                    bgcolor: message.role === 'user' ? '#e3f2fd' : message.role === 'url' ? '#e8f5e9' : '#f5f5f5',
+                    bgcolor: message.role === 'user' ? '#e3f2fd' : message.role === 'url' ? '#e8f5e9' : message.role === 'image' ? '#fff3e0' : '#f5f5f5',
                     borderRadius: 2
                   }}
                 >
@@ -125,6 +125,24 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId, sessionId, initia
                         </Button>
                       </Box>
                     </Box>
+                  ) : message.role === 'image' ? (
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                        Chart
+                      </Typography>
+                      <Box
+                        component="img"
+                        src={getMessageContent(message)}
+                        alt="Chart"
+                        sx={{
+                          maxWidth: '100%',
+                          height: 'auto',
+                          borderRadius: 1,
+                          cursor: 'pointer'
+                        }}
+                        onClick={() => window.open(getMessageContent(message), '_blank')}
+                      />
+                    </Box>
                   ) : (
                     <Box>
                       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
@@ -132,6 +150,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId, sessionId, initia
                       </Typography>
                       <Box
                         sx={{
+                          '& img': {
+                            maxWidth: '100%',
+                            height: 'auto',
+                            borderRadius: 1
+                          },
                           '& pre': {
                             backgroundColor: '#f5f5f5',
                             p: 1.5,
