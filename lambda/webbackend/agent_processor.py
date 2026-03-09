@@ -97,8 +97,6 @@ Your primary role is to:
 You have access to the following tools:
 - execute_sql_query: Executes a SQL query on Athena and returns the results
 - create_downloadable_url: Creates a downloadable URL for query results
-- execute_sql_query: Executes a SQL query on Athena and returns the results
-- create_downloadable_url: Creates a downloadable URL for query results
 - execute_chart_code: Executes Python code in a secure sandbox to generate charts/graphs using matplotlib. The sandbox has pandas, numpy, matplotlib pre-installed. Generated charts are automatically uploaded to S3 and presigned URLs are returned.{AGENT_INSTRUCTION_ADDITIONAL_TOOLS}
 
 When a user asks a question about data, follow this process:
