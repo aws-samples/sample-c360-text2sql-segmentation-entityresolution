@@ -14,19 +14,38 @@ AMT Customer 360 ソリューションの完全なデプロイ手順です。
 
 ## デプロイ手順
 
-### 1. Docker 環境のセットアップ（必要な場合）
+### 0. StackName Prefix のヒアリング
 
-Docker 権限エラーが発生した場合：
+デプロイを開始する前に、ユーザーに StackName の prefix を確認してください。
+
+> 「デプロイするスタック名に prefix を付けますか？（例：dev、TeamA）。prefix を付けると `dev_AmtC360MarketingStack` のようなスタック名になります。不要な場合は空のままで構いません。」
+
+ユーザーが prefix を指定した場合、`bin/amt-c360-marketing.ts` 内のスタック名を書き換えてください：
+- `'AmtC360WafStack'` → `'<PREFIX>_AmtC360WafStack'`
+- `'AmtC360MarketingStack'` → `'<PREFIX>_AmtC360MarketingStack'`
+
+指定がない場合はそのまま進めてください。
+
+### 1. Docker 環境のセットアップ
+
+デプロイ前に Docker が利用可能か確認してください：
+
+```bash
+docker info > /dev/null 2>&1 && echo "OK" || echo "NG"
+```
+
+`NG` の場合、まず docker グループにユーザーを追加してください：
 
 ```bash
 sudo usermod -aG docker $USER
 sudo systemctl restart docker
 ```
 
-変更を反映するにはターミナルの再起動が必要です。
+その後、`sg` コマンドで docker グループ権限を使ってデプロイコマンドを実行してください（ステップ 2 参照）。
 
 ### 2. CDK デプロイ
 
+Docker が利用可能（`OK`）な場合：
 ```bash
 cd <project-dir>
 npm ci
@@ -34,14 +53,24 @@ npm run cdk bootstrap  # 初回のみ
 npm run cdk -- deploy --all --require-approval never
 ```
 
+Docker 権限を `sg` で付与した場合：
+```bash
+cd <project-dir>
+npm ci
+sg docker -c "npm run cdk bootstrap"  # 初回のみ
+sg docker -c "npm run cdk -- deploy --all --require-approval never"
+```
+
 ### 3. スタック出力の取得
 
 ```bash
 aws cloudformation describe-stacks \
-  --stack-name AmtC360MarketingStack \
+  --stack-name <STACK_NAME> \
   --query "Stacks[0].Outputs" \
   --output table
 ```
+
+`<STACK_NAME>` はステップ 0 で決定したスタック名を使用してください（例：`dev_AmtC360MarketingStack` または `AmtC360MarketingStack`）。
 
 以下の値をメモ：
 - `DataStorageDataBucketOutput` - S3バケット名
@@ -92,7 +121,7 @@ python3 dbloader/upload_to_s3.py
 
 ```bash
 aws cloudformation describe-stack-events \
-  --stack-name AmtC360MarketingStack \
+  --stack-name <STACK_NAME> \
   --max-items 20
 ```
 

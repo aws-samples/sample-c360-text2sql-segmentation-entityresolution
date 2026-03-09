@@ -6,18 +6,24 @@ inclusion: manual
 
 ## 概要
 
-デプロイ済みの AmtC360MarketingStack から S3 バケット名と Glue データベース名を取得し、`csvtool/csv_to_glue_catalog.py` の変数を更新してスクリプトを実行する。
+デプロイ済みのスタックから S3 バケット名と Glue データベース名を取得し、`csvtool/csv_to_glue_catalog.py` の変数を更新してスクリプトを実行する。
+
+※ デプロイ時に stackPrefix を指定した場合、スタック名は `<PREFIX>_AmtC360MarketingStack` となります。ユーザーに確認してください。
 
 ## ワークフロー
 
+### 0. スタック名の確認
+
+`bin/amt-c360-marketing.ts` を読み、デプロイ時のスタック名を確認してください。1-deploy で prefix が付与されている場合、`AmtC360MarketingStack` ではなく `<PREFIX>_AmtC360MarketingStack` のようになっています。以降のコマンドではこのスタック名を使用してください。
+
 ### 1. CloudFormation から情報を取得
 
-以下のコマンドで AmtC360MarketingStack からリソース情報を取得する。
+以下のコマンドでスタックからリソース情報を取得する。スタック名はデプロイ時の prefix に応じて変更すること（例：`dev_AmtC360MarketingStack`）。
 
 S3 バケット名:
 ```bash
 aws cloudformation describe-stacks \
-  --stack-name AmtC360MarketingStack \
+  --stack-name <STACK_NAME> \
   --query "Stacks[0].Outputs[?OutputKey=='DataStorageDataBucketOutput'].OutputValue" \
   --output text
 ```
@@ -25,19 +31,40 @@ aws cloudformation describe-stacks \
 Glue データベース名:
 ```bash
 aws cloudformation list-stack-resources \
-  --stack-name AmtC360MarketingStack \
+  --stack-name <STACK_NAME> \
   --query "StackResourceSummaries[?ResourceType=='AWS::Glue::Database'].PhysicalResourceId" \
   --output text
 ```
 
-### 2. csvtool/csv_to_glue_catalog.py の変数を更新
+### 2. Python 依存パッケージの確認
+
+`csvtool/requirements.txt` に記載されたパッケージ（pandas, boto3）がインストール済みか確認する：
+
+```bash
+python3 -c "import pandas; import boto3; print('OK')"
+```
+
+`OK` が表示されない場合、まず pip でのインストールを試みる：
+
+```bash
+pip install -r csvtool/requirements.txt
+```
+
+pip が利用できない場合は、システムパッケージでインストールする：
+
+```bash
+sudo apt update
+sudo apt install -y python3-pandas python3-boto3
+```
+
+### 3. csvtool/csv_to_glue_catalog.py の変数を更新
 
 取得した値で以下の変数を書き換える:
 
 - `S3_BUCKET_NAME` → 取得した S3 バケット名
 - `GLUE_DATABASE_NAME` → 取得した Glue データベース名
 
-### 3. スクリプトを実行
+### 4. スクリプトを実行
 
 ```bash
 cd csvtool && python csv_to_glue_catalog.py
@@ -47,5 +74,5 @@ cd csvtool && python csv_to_glue_catalog.py
 
 ## 安全性に関する注意事項
 
-- AmtC360MarketingStack のリソース以外を操作しないこと
+- スタックのリソース以外を操作しないこと
 - ユーザーの CSV ファイルの元データを削除・変更しないこと
