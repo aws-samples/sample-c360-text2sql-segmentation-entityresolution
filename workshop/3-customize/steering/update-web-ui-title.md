@@ -14,6 +14,10 @@ inclusion: manual
 
 ## ワークフロー
 
+### 0. スタック名の確認
+
+`bin/amt-c360-marketing.ts` を読み、デプロイ時のスタック名を確認してください。1-deploy で prefix が付与されている場合、`AmtC360MarketingStack` ではなく `<PREFIX>_AmtC360MarketingStack` のようになっています。以降の cdk deploy ではこのスタック名が使用されます。
+
 ### 1. build.md を読み込む
 
 `workshop/2-ai-bpr/build/build.md` を読み、AI エージェントのプロトタイプ設計に基づいてソリューションにふさわしいアプリ名を決定する。

@@ -12,6 +12,10 @@ inclusion: manual
 
 ## ワークフロー
 
+### 0. スタック名の確認
+
+`bin/amt-c360-marketing.ts` を読み、デプロイ時のスタック名を確認してください。1-deploy で prefix が付与されている場合、`AmtC360MarketingStack` ではなく `<PREFIX>_AmtC360MarketingStack` のようになっています。以降のコマンドではこのスタック名を使用してください。
+
 ### 1. CloudFormation から情報を取得
 
 以下のコマンドでスタックからリソース情報を取得する。スタック名はデプロイ時の prefix に応じて変更すること（例：`dev_AmtC360MarketingStack`）。
