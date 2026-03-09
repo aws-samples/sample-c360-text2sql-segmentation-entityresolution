@@ -145,18 +145,20 @@ def remove_thinking_tags(text: str) -> str:
     return cleaned_text
 
 
-def filter_messages_for_response(messages):
+def filter_messages_for_response(messages, chart_image_urls=None):
     """
     Filter and process messages for client response, maintaining original message order.
 
     This function processes the conversation messages and handles special cases:
     - Keeps regular conversation messages
     - Converts downloadable URL tool results to special URL messages
+    - Appends chart image URLs as special image messages
     - Filters out other tool use and tool result messages
     - Removes <thinking> tags from message content for clean client display
 
     Args:
         messages: List of message dictionaries from the conversation
+        chart_image_urls: Optional list of presigned URLs for chart images
 
     Returns:
         List of filtered messages in their original order
@@ -202,5 +204,10 @@ def filter_messages_for_response(messages):
                 url_text = content_item["toolResult"]["content"][0].get("text", "")
                 filtered_messages.append({"role": "url", "content": [{"text": url_text}]})
                 break
+
+    # Append chart image URLs as special image messages
+    if chart_image_urls:
+        for url in chart_image_urls:
+            filtered_messages.append({"role": "image", "content": [{"text": url}]})
 
     return filtered_messages

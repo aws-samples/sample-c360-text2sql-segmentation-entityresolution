@@ -67,6 +67,31 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId, sessionId, initia
     return message.content[0]?.text || '';
   };
 
+  // Validate and normalize URLs before using them for navigation
+  const getSafeUrl = (rawUrl: string): string | null => {
+    if (!rawUrl) return null;
+    const trimmed = rawUrl.trim();
+    const lower = trimmed.toLowerCase();
+    if (lower.startsWith('javascript:') || lower.startsWith('data:') || lower.startsWith('vbscript:')) {
+      return null;
+    }
+    try {
+      const parsed = new URL(trimmed, window.location.origin);
+      if (parsed.origin !== window.location.origin && (trimmed.startsWith('http://') || trimmed.startsWith('https://'))) {
+        return null;
+      }
+      return parsed.toString();
+    } catch {
+      return null;
+    }
+  };
+
+  const openSafeUrlInNewTab = (rawUrl: string) => {
+    const safeUrl = getSafeUrl(rawUrl);
+    if (!safeUrl) return;
+    window.open(safeUrl, '_blank', 'noopener,noreferrer');
+  };
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
@@ -94,7 +119,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId, sessionId, initia
                   sx={{
                     p: 2,
                     maxWidth: '80%',
-                    bgcolor: message.role === 'user' ? '#e3f2fd' : message.role === 'url' ? '#e8f5e9' : '#f5f5f5',
+                    bgcolor: message.role === 'user' ? '#e3f2fd' : message.role === 'url' ? '#e8f5e9' : message.role === 'image' ? '#fff3e0' : '#f5f5f5',
                     borderRadius: 2
                   }}
                 >
@@ -113,17 +138,40 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId, sessionId, initia
                           }
                         }}
                       >
-                        <Button
-                          variant="contained"
-                          color="inherit"
-                          size="small"
-                          href={getMessageContent(message)}
-                          target="_blank"
-                          sx={{ mt: 1 }}
-                        >
-                          Download Results
-                        </Button>
+                        {(() => {
+                          const safeUrl = getSafeUrl(getMessageContent(message));
+                          return (
+                            <Button
+                              variant="contained"
+                              color="inherit"
+                              size="small"
+                              {...(safeUrl ? { href: safeUrl, target: '_blank', rel: 'noopener noreferrer' } : {})}
+                              disabled={!safeUrl}
+                              sx={{ mt: 1 }}
+                            >
+                              Download Results
+                            </Button>
+                          );
+                        })()}
                       </Box>
+                    </Box>
+                  ) : message.role === 'image' ? (
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                        Chart
+                      </Typography>
+                      <Box
+                        component="img"
+                        src={getMessageContent(message)}
+                        alt="Chart"
+                        sx={{
+                          maxWidth: '100%',
+                          height: 'auto',
+                          borderRadius: 1,
+                          cursor: 'pointer'
+                        }}
+                        onClick={() => openSafeUrlInNewTab(getMessageContent(message))}
+                      />
                     </Box>
                   ) : (
                     <Box>
@@ -132,6 +180,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId, sessionId, initia
                       </Typography>
                       <Box
                         sx={{
+                          '& img': {
+                            maxWidth: '100%',
+                            height: 'auto',
+                            borderRadius: 1
+                          },
                           '& pre': {
                             backgroundColor: '#f5f5f5',
                             p: 1.5,

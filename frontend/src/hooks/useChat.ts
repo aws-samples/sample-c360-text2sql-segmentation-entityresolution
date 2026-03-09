@@ -8,7 +8,7 @@ export type MessageContent = {
 };
 
 export type Message = {
-  role: 'user' | 'assistant' | 'url';
+  role: 'user' | 'assistant' | 'url' | 'image';
   content: MessageContent[];
 };
 

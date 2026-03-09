@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import uuid
+import base64
 from datetime import datetime
 from typing import Dict, Any, List
 from sessionutils import get_conversation_history, save_conversation_history, filter_messages_for_response, get_active_connection_id
@@ -27,7 +28,11 @@ ATHENA_WORKGROUP = os.environ["ATHENA_WORKGROUP"]
 SEGMENT_STATE_MACHINE_ARN = os.environ.get("SEGMENT_STATE_MACHINE_ARN")
 SOLUTION_VERSION_TABLE = os.environ.get("SOLUTION_VERSION_TABLE")
 BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
+CODE_INTERPRETER_REGION = os.environ.get("CODE_INTERPRETER_REGION", "us-west-2")
 USE_PERSONALIZE = SEGMENT_STATE_MACHINE_ARN and SOLUTION_VERSION_TABLE
+
+# S3 bucket for chart images (derived from Athena output location)
+CHART_IMAGE_BUCKET = ATHENA_OUTPUT_LOCATION.replace("s3://", "").split("/")[0]
 
 # Bedrock model setup
 bedrock_model = BedrockModel(
@@ -91,13 +96,23 @@ Your primary role is to:
 
 You have access to the following tools:
 - execute_sql_query: Executes a SQL query on Athena and returns the results
-- create_downloadable_url: Creates a downloadable URL for query results{AGENT_INSTRUCTION_ADDITIONAL_TOOLS}
+- create_downloadable_url: Creates a downloadable URL for query results
+- execute_chart_code: Executes Python code in a secure sandbox to generate charts/graphs using matplotlib. The sandbox has pandas, numpy, matplotlib pre-installed. Generated charts are automatically uploaded to S3 and presigned URLs are returned.{AGENT_INSTRUCTION_ADDITIONAL_TOOLS}
 
 When a user asks a question about data, follow this process:
 1. Based on the table structure provided in your system prompt and the user's question, formulate an appropriate SQL query
 2. Execute the query using execute_sql_query
 3. Present the results in a clear, readable format
 4. Explain what the results mean in the context of the user's question
+5. When visualization would help understanding (e.g., trends, comparisons, distributions), use execute_chart_code to generate charts with matplotlib. You may generate zero or multiple charts per response as appropriate.
+
+When generating charts with execute_chart_code:
+- matplotlib.use('Agg') is already set, do NOT call it again.
+- Do NOT use seaborn. Use only matplotlib.
+- IMPORTANT: Use English for all chart labels, titles, axis labels, and legends because the sandbox does not have Japanese fonts. Explain the chart in Japanese in your text response.
+- Include clear titles, axis labels, and legends
+- Choose appropriate chart types (bar, line, pie, scatter, etc.) based on the data
+- The tool returns presigned URLs for the generated chart images. Include these URLs in your response using markdown image syntax: ![Chart description](URL)
 
 {AGENT_INSTRUCTION_ADDITIONAL_WORKFLOW}
 IMPORTANT ATHENA SQL TIP:
@@ -199,6 +214,182 @@ def create_downloadable_url(query_execution_id: str) -> str:
     except Exception as e:
         logger.error(f"Error creating downloadable URL: {str(e)}")
         return f"Error creating downloadable URL: {str(e)}"
+
+
+MAX_CHART_FILE_SIZE = 10 * 1024 * 1024  # 10MB limit per chart image
+PNG_HEADER = b'\x89PNG\r\n\x1a\n'
+
+
+def _validate_png(data: bytes) -> bool:
+    """Validate that data starts with a valid PNG header and is within size limit."""
+    if len(data) > MAX_CHART_FILE_SIZE:
+        logger.warning(f"Chart image too large: {len(data)} bytes (limit: {MAX_CHART_FILE_SIZE})")
+        return False
+    if not data.startswith(PNG_HEADER):
+        logger.warning("Chart image does not have valid PNG header")
+        return False
+    return True
+
+
+@tool
+def execute_chart_code(python_code: str, description: str = "") -> str:
+    """
+    Execute Python code in a secure sandbox to generate charts/graphs using matplotlib.
+    Generated chart images are saved as files in the sandbox, then retrieved by the Lambda
+    function, validated, and uploaded to S3. Presigned URLs for the uploaded images are returned.
+
+    IMPORTANT: The code MUST use matplotlib. matplotlib.use('Agg') is already set.
+    Do NOT use seaborn. Use only matplotlib.
+
+    Args:
+        python_code: Python code that generates charts using matplotlib.
+        description: Brief description of what the chart shows.
+
+    Returns:
+        A string containing presigned S3 URLs for each generated chart image,
+        or an error/status message if no charts were generated.
+    """
+    # Wrap user code: intercept savefig/show/close to capture chart files
+    wrapped_code = (
+        "import matplotlib\n"
+        "matplotlib.use('Agg')\n"
+        "import warnings\n"
+        "warnings.filterwarnings('ignore')\n"
+        "import matplotlib.pyplot as plt\n"
+        "import json, os, base64, io\n"
+        "_chart_images = []\n"
+        "_chart_counter = [0]\n"
+        "\n"
+        "# Patch savefig to capture images as base64\n"
+        "_orig_savefig = plt.Figure.savefig\n"
+        "def _patched_savefig(self, fname, *a, **k):\n"
+        "    _orig_savefig(self, fname, *a, **k)\n"
+        "    _buf = io.BytesIO()\n"
+        "    _orig_savefig(self, _buf, format='png', bbox_inches='tight', dpi=150)\n"
+        "    _buf.seek(0)\n"
+        "    _chart_counter[0] += 1\n"
+        "    _chart_images.append({'i': _chart_counter[0], 'd': base64.b64encode(_buf.read()).decode()})\n"
+        "plt.Figure.savefig = _patched_savefig\n"
+        "\n"
+        "# Patch show to capture all open figures\n"
+        "def _capture_open_figs():\n"
+        "    for _i in plt.get_fignums():\n"
+        "        _buf = io.BytesIO()\n"
+        "        _orig_savefig(plt.figure(_i), _buf, format='png', bbox_inches='tight', dpi=150)\n"
+        "        _buf.seek(0)\n"
+        "        _chart_counter[0] += 1\n"
+        "        _chart_images.append({'i': _chart_counter[0], 'd': base64.b64encode(_buf.read()).decode()})\n"
+        "def _pshow(*a, **k):\n"
+        "    _capture_open_figs()\n"
+        "plt.show = _pshow\n"
+        "\n"
+        + python_code + "\n"
+        "\n"
+        "# Final capture of any remaining open figures\n"
+        "_capture_open_figs()\n"
+        "# Deduplicate by index\n"
+        "_seen = set()\n"
+        "_unique = []\n"
+        "for _img in _chart_images:\n"
+        "    if _img['i'] not in _seen:\n"
+        "        _seen.add(_img['i'])\n"
+        "        _unique.append(_img)\n"
+        "print('__CHART_IMG__' + json.dumps(_unique) + '__CHART_END__')\n"
+    )
+
+    agentcore_client = boto3.client("bedrock-agentcore", region_name=CODE_INTERPRETER_REGION)
+    session_id = None
+    try:
+        # Start session
+        session_resp = agentcore_client.start_code_interpreter_session(
+            codeInterpreterIdentifier="aws.codeinterpreter.v1",
+            name=f"chart-{uuid.uuid4().hex[:8]}",
+            sessionTimeoutSeconds=300
+        )
+        session_id = session_resp["sessionId"]
+        logger.info(f"CodeInterpreter session started: {session_id}")
+
+        # Execute code
+        exec_resp = agentcore_client.invoke_code_interpreter(
+            codeInterpreterIdentifier="aws.codeinterpreter.v1",
+            sessionId=session_id,
+            name="executeCode",
+            arguments={"language": "python", "code": wrapped_code}
+        )
+
+        # Collect output from stream
+        all_text = []
+        for event in exec_resp.get("stream", []):
+            logger.info(f"CodeInterpreter event: {json.dumps(event, default=str)[:2000]}")
+            if "result" in event:
+                result = event["result"]
+                for c in result.get("content", []):
+                    if c.get("type") == "text" and c.get("text"):
+                        all_text.append(c["text"])
+                sc = result.get("structuredContent", {})
+                if sc.get("stdout"):
+                    all_text.append(sc["stdout"])
+
+        stdout = "\n".join(all_text)
+        logger.info(f"CodeInterpreter stdout_len={len(stdout)}, has_marker={'__CHART_IMG__' in stdout}")
+
+        # Parse chart images from output (base64 encoded via stdout)
+        chart_images = []
+        clean_output = stdout
+        if "__CHART_IMG__" in stdout and "__CHART_END__" in stdout:
+            start = stdout.find("__CHART_IMG__") + len("__CHART_IMG__")
+            end = stdout.find("__CHART_END__")
+            img_json = stdout[start:end]
+            clean_output = stdout[:stdout.find("__CHART_IMG__")].strip()
+            try:
+                chart_images = json.loads(img_json)
+            except Exception as e:
+                logger.error(f"Error parsing chart image data: {str(e)}")
+
+        # Decode, validate, and upload each chart image to S3
+        image_urls = []
+        for img_data in chart_images:
+            try:
+                img_bytes = base64.b64decode(img_data['d'])
+
+                # Validate PNG before uploading to S3
+                if not _validate_png(img_bytes):
+                    continue
+
+                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                file_key = f"chart-images/{ts}_{uuid.uuid4().hex[:8]}.png"
+                s3.put_object(Bucket=CHART_IMAGE_BUCKET, Key=file_key, Body=img_bytes, ContentType='image/png')
+                url = s3.generate_presigned_url('get_object', Params={'Bucket': CHART_IMAGE_BUCKET, 'Key': file_key}, ExpiresIn=3600)
+                image_urls.append(url)
+                logger.info(f"Uploaded chart to s3://{CHART_IMAGE_BUCKET}/{file_key}")
+            except Exception as e:
+                logger.error(f"Error processing chart image: {str(e)}")
+
+        if image_urls:
+            parts = []
+            if clean_output:
+                parts.append(f"Code output:\n{clean_output}")
+            parts.append(f"Generated {len(image_urls)} chart(s):")
+            for i, url in enumerate(image_urls):
+                parts.append(f"Chart {i+1} URL: {url}")
+            return "\n".join(parts)
+        elif clean_output:
+            return f"Code output (no charts generated):\n{clean_output}"
+        else:
+            return "Code executed successfully (no output)"
+
+    except Exception as e:
+        logger.error(f"Error in execute_chart_code: {str(e)}")
+        return f"Error executing chart code: {str(e)}"
+    finally:
+        if session_id:
+            try:
+                agentcore_client.stop_code_interpreter_session(
+                    codeInterpreterIdentifier="aws.codeinterpreter.v1",
+                    sessionId=session_id
+                )
+            except Exception:
+                pass
 
 
 @tool
@@ -582,6 +773,34 @@ def send_to_connection(connection_id, data, api_gateway_endpoint):
         logger.error(f"Error sending message to connection {connection_id}: {str(e)}")
 
 
+def extract_chart_urls_from_messages(messages):
+    """
+    Extract chart image URLs from execute_chart_code tool results.
+    The tool returns presigned S3 URLs in its text output.
+
+    Args:
+        messages: The agent's conversation messages
+
+    Returns:
+        List of presigned URLs for chart images
+    """
+    import re
+    image_urls = []
+    for message in messages:
+        for content_item in message.get("content", []):
+            if "toolResult" not in content_item:
+                continue
+            tool_result = content_item["toolResult"]
+            for result_content in tool_result.get("content", []):
+                text = result_content.get("text", "")
+                if "Chart" in text and "URL:" in text:
+                    # Extract URLs from "Chart N URL: https://..." lines
+                    url_matches = re.findall(r'Chart \d+ URL: (https://[^\s]+)', text)
+                    image_urls.extend(url_matches)
+    logger.info(f"Extracted {len(image_urls)} chart URLs from messages")
+    return image_urls
+
+
 def handler(event, context):
     """
     Main handler for the Agent processor Lambda.
@@ -625,7 +844,7 @@ def handler(event, context):
         )
 
         # Build tools list based on available services
-        tools = [execute_sql_query, create_downloadable_url]
+        tools = [execute_sql_query, create_downloadable_url, execute_chart_code]
         if USE_PERSONALIZE:
             tools.extend([create_personalize_item_based_segment, check_personalize_segment_status])
 
@@ -640,11 +859,14 @@ def handler(event, context):
         # Get the agent's response
         agent_response = agent(user_input)
 
+        # Extract chart image URLs from execute_chart_code tool results
+        chart_image_urls = extract_chart_urls_from_messages(agent.messages)
+
         # Save the updated messages directly from the agent
         save_conversation_history(user_id, session_id, agent.messages)
 
         # Filter messages for response
-        conversation_history = filter_messages_for_response(agent.messages)
+        conversation_history = filter_messages_for_response(agent.messages, chart_image_urls)
 
         # 最新のconnection_idを取得（接続が切れて再接続した場合に備えて）
         current_connection_id = get_active_connection_id(user_id, session_id) or connection_id
