@@ -33,14 +33,20 @@ inclusion: manual
 docker info > /dev/null 2>&1 && echo "OK" || echo "NG"
 ```
 
-`NG` の場合、以下を実行してからターミナルを再起動してください：
+`NG` の場合、まず docker グループにユーザーを追加してください：
 
 ```bash
 sudo usermod -aG docker $USER
 sudo systemctl restart docker
 ```
 
-Docker が利用可能であることを確認してからデプロイを実行してください：
+その後、`sg` コマンドで docker グループ権限を使ってデプロイを実行してください：
+
+```bash
+sg docker -c "npx cdk deploy --require-approval never"
+```
+
+Docker が利用可能（`OK`）な場合はそのまま実行してください：
 
 ```bash
 npx cdk deploy --require-approval never

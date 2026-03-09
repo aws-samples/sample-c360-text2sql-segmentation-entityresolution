@@ -26,24 +26,39 @@ AMT Customer 360 ソリューションの完全なデプロイ手順です。
 
 指定がない場合はそのまま進めてください。
 
-### 1. Docker 環境のセットアップ（必要な場合）
+### 1. Docker 環境のセットアップ
 
-Docker 権限エラーが発生した場合：
+デプロイ前に Docker が利用可能か確認してください：
+
+```bash
+docker info > /dev/null 2>&1 && echo "OK" || echo "NG"
+```
+
+`NG` の場合、まず docker グループにユーザーを追加してください：
 
 ```bash
 sudo usermod -aG docker $USER
 sudo systemctl restart docker
 ```
 
-変更を反映するにはターミナルの再起動が必要です。
+その後、`sg` コマンドで docker グループ権限を使ってデプロイコマンドを実行してください（ステップ 2 参照）。
 
 ### 2. CDK デプロイ
 
+Docker が利用可能（`OK`）な場合：
 ```bash
 cd <project-dir>
 npm ci
 npm run cdk bootstrap  # 初回のみ
 npm run cdk -- deploy --all --require-approval never
+```
+
+Docker 権限を `sg` で付与した場合：
+```bash
+cd <project-dir>
+npm ci
+sg docker -c "npm run cdk bootstrap"  # 初回のみ
+sg docker -c "npm run cdk -- deploy --all --require-approval never"
 ```
 
 ### 3. スタック出力の取得
