@@ -67,6 +67,31 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId, sessionId, initia
     return message.content[0]?.text || '';
   };
 
+  // Validate and normalize URLs before using them for navigation
+  const getSafeUrl = (rawUrl: string): string | null => {
+    if (!rawUrl) return null;
+    const trimmed = rawUrl.trim();
+    const lower = trimmed.toLowerCase();
+    if (lower.startsWith('javascript:') || lower.startsWith('data:') || lower.startsWith('vbscript:')) {
+      return null;
+    }
+    try {
+      const parsed = new URL(trimmed, window.location.origin);
+      if (parsed.origin !== window.location.origin && (trimmed.startsWith('http://') || trimmed.startsWith('https://'))) {
+        return null;
+      }
+      return parsed.toString();
+    } catch {
+      return null;
+    }
+  };
+
+  const openSafeUrlInNewTab = (rawUrl: string) => {
+    const safeUrl = getSafeUrl(rawUrl);
+    if (!safeUrl) return;
+    window.open(safeUrl, '_blank', 'noopener,noreferrer');
+  };
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
@@ -113,16 +138,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId, sessionId, initia
                           }
                         }}
                       >
-                        <Button
-                          variant="contained"
-                          color="inherit"
-                          size="small"
-                          href={getMessageContent(message)}
-                          target="_blank"
-                          sx={{ mt: 1 }}
-                        >
-                          Download Results
-                        </Button>
+                        {(() => {
+                          const safeUrl = getSafeUrl(getMessageContent(message));
+                          return (
+                            <Button
+                              variant="contained"
+                              color="inherit"
+                              size="small"
+                              {...(safeUrl ? { href: safeUrl, target: '_blank', rel: 'noopener noreferrer' } : {})}
+                              disabled={!safeUrl}
+                              sx={{ mt: 1 }}
+                            >
+                              Download Results
+                            </Button>
+                          );
+                        })()}
                       </Box>
                     </Box>
                   ) : message.role === 'image' ? (
@@ -140,7 +170,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userId, sessionId, initia
                           borderRadius: 1,
                           cursor: 'pointer'
                         }}
-                        onClick={() => window.open(getMessageContent(message), '_blank')}
+                        onClick={() => openSafeUrlInNewTab(getMessageContent(message))}
                       />
                     </Box>
                   ) : (

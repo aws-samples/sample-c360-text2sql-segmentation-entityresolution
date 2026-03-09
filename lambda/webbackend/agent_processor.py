@@ -216,43 +216,85 @@ def create_downloadable_url(query_execution_id: str) -> str:
         return f"Error creating downloadable URL: {str(e)}"
 
 
+MAX_CHART_FILE_SIZE = 10 * 1024 * 1024  # 10MB limit per chart image
+PNG_HEADER = b'\x89PNG\r\n\x1a\n'
+
+
+def _validate_png(data: bytes) -> bool:
+    """Validate that data starts with a valid PNG header and is within size limit."""
+    if len(data) > MAX_CHART_FILE_SIZE:
+        logger.warning(f"Chart image too large: {len(data)} bytes (limit: {MAX_CHART_FILE_SIZE})")
+        return False
+    if not data.startswith(PNG_HEADER):
+        logger.warning("Chart image does not have valid PNG header")
+        return False
+    return True
+
+
 @tool
 def execute_chart_code(python_code: str, description: str = "") -> str:
     """
     Execute Python code in a secure sandbox to generate charts/graphs using matplotlib.
-    Generated chart images are automatically uploaded to S3 and presigned URLs are returned.
+    Generated chart images are saved as files in the sandbox, then retrieved by the Lambda
+    function, validated, and uploaded to S3. Presigned URLs for the uploaded images are returned.
 
     IMPORTANT: The code MUST use matplotlib. matplotlib.use('Agg') is already set.
     Do NOT use seaborn. Use only matplotlib.
 
     Args:
-        python_code: Python code that generates charts using matplotlib
-        description: Brief description of what the chart shows
+        python_code: Python code that generates charts using matplotlib.
+        description: Brief description of what the chart shows.
 
     Returns:
-        A message with presigned URLs for the generated chart images
+        A string containing presigned S3 URLs for each generated chart image,
+        or an error/status message if no charts were generated.
     """
+    # Wrap user code: intercept savefig/show/close to capture chart files
     wrapped_code = (
         "import matplotlib\n"
         "matplotlib.use('Agg')\n"
         "import warnings\n"
         "warnings.filterwarnings('ignore')\n"
         "import matplotlib.pyplot as plt\n"
-        "import base64, io, json\n"
-        "_captured_images = []\n"
-        "_orig_show = plt.show\n"
-        "def _cap():\n"
+        "import json, os, base64, io\n"
+        "_chart_images = []\n"
+        "_chart_counter = [0]\n"
+        "\n"
+        "# Patch savefig to capture images as base64\n"
+        "_orig_savefig = plt.Figure.savefig\n"
+        "def _patched_savefig(self, fname, *a, **k):\n"
+        "    _orig_savefig(self, fname, *a, **k)\n"
+        "    _buf = io.BytesIO()\n"
+        "    _orig_savefig(self, _buf, format='png', bbox_inches='tight', dpi=150)\n"
+        "    _buf.seek(0)\n"
+        "    _chart_counter[0] += 1\n"
+        "    _chart_images.append({'i': _chart_counter[0], 'd': base64.b64encode(_buf.read()).decode()})\n"
+        "plt.Figure.savefig = _patched_savefig\n"
+        "\n"
+        "# Patch show to capture all open figures\n"
+        "def _capture_open_figs():\n"
         "    for _i in plt.get_fignums():\n"
-        "        _b = io.BytesIO()\n"
-        "        plt.figure(_i).savefig(_b, format='png', bbox_inches='tight', dpi=150)\n"
-        "        _b.seek(0)\n"
-        "        _captured_images.append({'i': _i, 'd': base64.b64encode(_b.read()).decode()})\n"
+        "        _buf = io.BytesIO()\n"
+        "        _orig_savefig(plt.figure(_i), _buf, format='png', bbox_inches='tight', dpi=150)\n"
+        "        _buf.seek(0)\n"
+        "        _chart_counter[0] += 1\n"
+        "        _chart_images.append({'i': _chart_counter[0], 'd': base64.b64encode(_buf.read()).decode()})\n"
         "def _pshow(*a, **k):\n"
-        "    _cap()\n"
+        "    _capture_open_figs()\n"
         "plt.show = _pshow\n"
+        "\n"
         + python_code + "\n"
-        "_cap()\n"
-        "'__CHART_IMG__' + json.dumps(_captured_images) + '__CHART_END__' if _captured_images else 'NO_CHARTS'\n"
+        "\n"
+        "# Final capture of any remaining open figures\n"
+        "_capture_open_figs()\n"
+        "# Deduplicate by index\n"
+        "_seen = set()\n"
+        "_unique = []\n"
+        "for _img in _chart_images:\n"
+        "    if _img['i'] not in _seen:\n"
+        "        _seen.add(_img['i'])\n"
+        "        _unique.append(_img)\n"
+        "print('__CHART_IMG__' + json.dumps(_unique) + '__CHART_END__')\n"
     )
 
     agentcore_client = boto3.client("bedrock-agentcore", region_name=CODE_INTERPRETER_REGION)
@@ -281,11 +323,9 @@ def execute_chart_code(python_code: str, description: str = "") -> str:
             logger.info(f"CodeInterpreter event: {json.dumps(event, default=str)[:2000]}")
             if "result" in event:
                 result = event["result"]
-                # Check content array
                 for c in result.get("content", []):
                     if c.get("type") == "text" and c.get("text"):
                         all_text.append(c["text"])
-                # Check structuredContent.stdout
                 sc = result.get("structuredContent", {})
                 if sc.get("stdout"):
                     all_text.append(sc["stdout"])
@@ -293,8 +333,8 @@ def execute_chart_code(python_code: str, description: str = "") -> str:
         stdout = "\n".join(all_text)
         logger.info(f"CodeInterpreter stdout_len={len(stdout)}, has_marker={'__CHART_IMG__' in stdout}")
 
-        # Extract chart images
-        image_urls = []
+        # Parse chart images from output (base64 encoded via stdout)
+        chart_images = []
         clean_output = stdout
         if "__CHART_IMG__" in stdout and "__CHART_END__" in stdout:
             start = stdout.find("__CHART_IMG__") + len("__CHART_IMG__")
@@ -302,17 +342,28 @@ def execute_chart_code(python_code: str, description: str = "") -> str:
             img_json = stdout[start:end]
             clean_output = stdout[:stdout.find("__CHART_IMG__")].strip()
             try:
-                imgs = json.loads(img_json)
-                for img_data in imgs:
-                    img_bytes = base64.b64decode(img_data['d'])
-                    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    file_key = f"chart-images/{ts}_{uuid.uuid4().hex[:8]}.png"
-                    s3.put_object(Bucket=CHART_IMAGE_BUCKET, Key=file_key, Body=img_bytes, ContentType='image/png')
-                    url = s3.generate_presigned_url('get_object', Params={'Bucket': CHART_IMAGE_BUCKET, 'Key': file_key}, ExpiresIn=3600)
-                    image_urls.append(url)
-                    logger.info(f"Uploaded chart to s3://{CHART_IMAGE_BUCKET}/{file_key}")
+                chart_images = json.loads(img_json)
             except Exception as e:
-                logger.error(f"Error processing chart images: {str(e)}")
+                logger.error(f"Error parsing chart image data: {str(e)}")
+
+        # Decode, validate, and upload each chart image to S3
+        image_urls = []
+        for img_data in chart_images:
+            try:
+                img_bytes = base64.b64decode(img_data['d'])
+
+                # Validate PNG before uploading to S3
+                if not _validate_png(img_bytes):
+                    continue
+
+                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                file_key = f"chart-images/{ts}_{uuid.uuid4().hex[:8]}.png"
+                s3.put_object(Bucket=CHART_IMAGE_BUCKET, Key=file_key, Body=img_bytes, ContentType='image/png')
+                url = s3.generate_presigned_url('get_object', Params={'Bucket': CHART_IMAGE_BUCKET, 'Key': file_key}, ExpiresIn=3600)
+                image_urls.append(url)
+                logger.info(f"Uploaded chart to s3://{CHART_IMAGE_BUCKET}/{file_key}")
+            except Exception as e:
+                logger.error(f"Error processing chart image: {str(e)}")
 
         if image_urls:
             parts = []
